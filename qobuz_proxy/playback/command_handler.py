@@ -162,6 +162,7 @@ class PlaybackCommandHandler:
         if state.HasField("currentPosition"):
             position_ms = state.currentPosition
             logger.debug(f"Position: {position_ms}ms")
+            await self.player.seek(position_ms=position_ms)
 
         # Handle playing state - apply AFTER track is loaded
         if state.HasField("playingState"):
