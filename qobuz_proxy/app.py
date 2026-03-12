@@ -62,6 +62,7 @@ class QobuzProxy:
         self._is_running = False
         self._shutdown_event = asyncio.Event()
         self._ws_connected_event = asyncio.Event()
+        self._ws_setup_lock = asyncio.Lock()
 
         # Components (initialized in start())
         self._api_client: Optional[QobuzAPIClient] = None
@@ -243,98 +244,105 @@ class QobuzProxy:
         assert self._queue is not None
         assert self._player is not None
 
-        try:
-            # Create WebSocket manager
-            self._ws_manager = WsManager(config=self._config)
-            self._ws_manager.set_tokens(tokens)
-            self._ws_manager.set_max_audio_quality(self._effective_quality)
-
-            # Create handlers
-            self._queue_handler = QueueHandler(self._queue)
-            self._playback_handler = PlaybackCommandHandler(
-                self._player,
-                on_quality_change=self._on_quality_change,
-            )
-            self._volume_handler = VolumeCommandHandler(self._player)
-
-            # Wire up next track callbacks for auto-advance
-            self._player.set_next_track_callbacks(
-                get_callback=self._playback_handler.get_next_track_info,
-                clear_callback=self._playback_handler.clear_next_track_info,
-            )
-
-            # Register handlers for their message types
-            for msg_type in self._queue_handler.get_message_types():
-                self._ws_manager.register_handler(
-                    msg_type,
-                    lambda mt, msg, h=self._queue_handler: asyncio.create_task(
-                        h.handle_message(mt, msg)
-                    ),
-                )
-
-            for msg_type in self._playback_handler.get_message_types():
-                self._ws_manager.register_handler(
-                    msg_type,
-                    lambda mt, msg, h=self._playback_handler: asyncio.create_task(
-                        h.handle_message(mt, msg)
-                    ),
-                )
-
-            for msg_type in self._volume_handler.get_message_types():
-                self._ws_manager.register_handler(
-                    msg_type,
-                    lambda mt, msg, h=self._volume_handler: asyncio.create_task(
-                        h.handle_message(mt, msg)
-                    ),
-                )
-
-            # Register error handler (message type 1)
-            self._ws_manager.register_handler(
-                1,  # MESSAGE_TYPE_ERROR
-                self._handle_protocol_error,
-            )
-
-            # Create and wire state reporter
-            self._state_reporter = StateReporter(
-                player=self._player,
-                queue=self._queue,
-                send_callback=self._send_state_report,
-            )
-            self._player.set_state_reporter(self._state_reporter)
-
-            # Wire volume reporting
-            self._player.set_volume_report_callback(self._ws_manager.send_volume_changed)
-
-            # Wire file quality reporting (sends per-track quality info to app)
-            self._player.set_file_quality_report_callback(
-                self._ws_manager.send_file_audio_quality_changed
-            )
-
-            # Start WebSocket connection
-            await self._ws_manager.start()
-            logger.info("WebSocket connected to Qobuz servers")
-
-            # Start state reporter
-            await self._state_reporter.start()
-
-            # Start player
-            await self._player.start()
-            logger.info("Player started")
-
-            # Send initial volume from backend so app shows accurate value
+        async with self._ws_setup_lock:
             try:
-                initial_volume = await self._player.get_volume()
-                await self._ws_manager.send_volume_changed(initial_volume)
-                logger.info(f"Sent initial volume to app: {initial_volume}%")
+                if self._ws_manager is not None:
+                    self._ws_manager.set_tokens(tokens)
+                    logger.info("Refreshed WebSocket tokens from Qobuz app")
+                    self._ws_connected_event.set()
+                    return
+
+                # Create WebSocket manager
+                self._ws_manager = WsManager(config=self._config)
+                self._ws_manager.set_tokens(tokens)
+                self._ws_manager.set_max_audio_quality(self._effective_quality)
+
+                # Create handlers
+                self._queue_handler = QueueHandler(self._queue)
+                self._playback_handler = PlaybackCommandHandler(
+                    self._player,
+                    on_quality_change=self._on_quality_change,
+                )
+                self._volume_handler = VolumeCommandHandler(self._player)
+
+                # Wire up next track callbacks for auto-advance
+                self._player.set_next_track_callbacks(
+                    get_callback=self._playback_handler.get_next_track_info,
+                    clear_callback=self._playback_handler.clear_next_track_info,
+                )
+
+                # Register handlers for their message types
+                for msg_type in self._queue_handler.get_message_types():
+                    self._ws_manager.register_handler(
+                        msg_type,
+                        lambda mt, msg, h=self._queue_handler: asyncio.create_task(
+                            h.handle_message(mt, msg)
+                        ),
+                    )
+
+                for msg_type in self._playback_handler.get_message_types():
+                    self._ws_manager.register_handler(
+                        msg_type,
+                        lambda mt, msg, h=self._playback_handler: asyncio.create_task(
+                            h.handle_message(mt, msg)
+                        ),
+                    )
+
+                for msg_type in self._volume_handler.get_message_types():
+                    self._ws_manager.register_handler(
+                        msg_type,
+                        lambda mt, msg, h=self._volume_handler: asyncio.create_task(
+                            h.handle_message(mt, msg)
+                        ),
+                    )
+
+                # Register error handler (message type 1)
+                self._ws_manager.register_handler(
+                    1,  # MESSAGE_TYPE_ERROR
+                    self._handle_protocol_error,
+                )
+
+                # Create and wire state reporter
+                self._state_reporter = StateReporter(
+                    player=self._player,
+                    queue=self._queue,
+                    send_callback=self._send_state_report,
+                )
+                self._player.set_state_reporter(self._state_reporter)
+
+                # Wire volume reporting
+                self._player.set_volume_report_callback(self._ws_manager.send_volume_changed)
+
+                # Wire file quality reporting (sends per-track quality info to app)
+                self._player.set_file_quality_report_callback(
+                    self._ws_manager.send_file_audio_quality_changed
+                )
+
+                # Start WebSocket connection
+                await self._ws_manager.start()
+                logger.info("WebSocket connected to Qobuz servers")
+
+                # Start state reporter
+                await self._state_reporter.start()
+
+                # Start player
+                await self._player.start()
+                logger.info("Player started")
+
+                # Send initial volume from backend so app shows accurate value
+                try:
+                    initial_volume = await self._player.get_volume()
+                    await self._ws_manager.send_volume_changed(initial_volume)
+                    logger.info(f"Sent initial volume to app: {initial_volume}%")
+                except Exception as e:
+                    logger.warning(f"Failed to send initial volume: {e}")
+
+                # Signal that connection is complete
+                self._ws_connected_event.set()
+
             except Exception as e:
-                logger.warning(f"Failed to send initial volume: {e}")
-
-            # Signal that connection is complete
-            self._ws_connected_event.set()
-
-        except Exception as e:
-            logger.error(f"Failed to set up WebSocket: {e}", exc_info=True)
-            # Don't signal - will cause eventual shutdown
+                logger.error(f"Failed to set up WebSocket: {e}", exc_info=True)
+                # Don't signal - will cause eventual shutdown
 
     async def _on_quality_change(self, new_quality: int) -> None:
         """

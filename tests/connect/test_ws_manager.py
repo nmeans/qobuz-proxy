@@ -1,7 +1,8 @@
 """Tests for WebSocket manager."""
 
+import asyncio
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -94,6 +95,54 @@ class TestTokenManagement:
         ws_manager.set_tokens(valid_tokens)
         assert isinstance(ws_manager._session_uuid, bytes)
         assert len(ws_manager._session_uuid) == 16
+
+    @pytest.mark.asyncio
+    async def test_wait_for_valid_token_blocks_until_refresh(
+        self, ws_manager: WsManager, valid_tokens: ConnectTokens
+    ) -> None:
+        """Expired tokens should wait for refresh instead of looping reconnects."""
+        expired_tokens = ConnectTokens(
+            session_id=str(uuid.uuid4()),
+            ws_token=JWTConnectToken(
+                jwt="expired_jwt_token",
+                exp=1,
+                endpoint="wss://test.qobuz.com/ws",
+            ),
+        )
+
+        ws_manager.set_tokens(expired_tokens)
+        ws_manager._should_run = True
+
+        wait_task = asyncio.create_task(ws_manager._wait_for_valid_token(buffer_s=60))
+        await asyncio.sleep(0)
+        assert wait_task.done() is False
+
+        ws_manager.set_tokens(valid_tokens)
+
+        assert await asyncio.wait_for(wait_task, timeout=1.0) is True
+
+    @pytest.mark.asyncio
+    async def test_set_tokens_closes_existing_connection_for_refresh(
+        self, ws_manager: WsManager, valid_tokens: ConnectTokens
+    ) -> None:
+        """Receiving fresh tokens while connected should force a reconnect."""
+        ws_manager.set_tokens(valid_tokens)
+        ws_manager._should_run = True
+        ws_manager._ws = AsyncMock()
+
+        refreshed_tokens = ConnectTokens(
+            session_id=str(uuid.uuid4()),
+            ws_token=JWTConnectToken(
+                jwt="refreshed_jwt_token",
+                exp=9999999999,
+                endpoint="wss://test.qobuz.com/ws",
+            ),
+        )
+
+        ws_manager.set_tokens(refreshed_tokens)
+        await asyncio.sleep(0)
+
+        ws_manager._ws.close.assert_awaited_once()
 
 
 class TestHandlerRegistration:

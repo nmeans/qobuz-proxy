@@ -1,9 +1,11 @@
 """Tests for app.py local backend integration (QPROXY-023)."""
 
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from qobuz_proxy.app import QobuzProxy
 from qobuz_proxy.backends.local.backend import LocalAudioBackend
+from qobuz_proxy.connect.types import ConnectTokens, JWTConnectToken
 from qobuz_proxy.config import Config, AUTO_QUALITY
 
 
@@ -153,3 +155,27 @@ class TestAppLocalBackend:
 
         # set_fixed_volume_mode should NOT have been called
         mock_player.set_fixed_volume_mode.assert_not_called()
+
+    async def test_setup_websocket_reuses_existing_manager(self) -> None:
+        """Fresh handshakes should update the existing manager instead of rebuilding it."""
+        config = _make_local_config()
+        app = QobuzProxy(config)
+        app._queue = MagicMock()
+        app._player = MagicMock()
+        app._ws_manager = MagicMock()
+
+        tokens = ConnectTokens(
+            session_id=str(uuid.uuid4()),
+            ws_token=JWTConnectToken(
+                jwt="refreshed_jwt_token",
+                exp=9999999999,
+                endpoint="wss://test.qobuz.com/ws",
+            ),
+        )
+
+        with patch("qobuz_proxy.app.WsManager") as mock_ws_manager_class:
+            await app._setup_websocket(tokens)
+
+        app._ws_manager.set_tokens.assert_called_once_with(tokens)
+        assert app._ws_connected_event.is_set() is True
+        mock_ws_manager_class.assert_not_called()

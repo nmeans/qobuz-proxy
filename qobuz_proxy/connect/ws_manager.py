@@ -33,6 +33,10 @@ RECONNECT_BACKOFF_MULTIPLIER = 2.0
 MessageHandler = Callable[[int, Any], None]
 
 
+class TokenRefreshRequired(Exception):
+    """Raised when the WebSocket must wait for refreshed tokens from the app."""
+
+
 class WsManager:
     """
     Manages WebSocket connection to Qobuz servers.
@@ -65,6 +69,10 @@ class WsManager:
         # Reconnection state
         self._reconnect_delay = INITIAL_RECONNECT_DELAY
 
+        # Token refresh state
+        self._token_update_event = asyncio.Event()
+        self._token_version = 0
+
         # Message handlers: message_type -> handler
         self._handlers: Dict[int, MessageHandler] = {}
 
@@ -88,6 +96,9 @@ class WsManager:
         Args:
             tokens: Tokens received from Qobuz app
         """
+        previous_token = self._ws_token
+        previous_session_uuid = self._session_uuid
+
         if tokens.ws_token:
             self._ws_token = WSToken.from_connect_token(
                 jwt=tokens.ws_token.jwt,
@@ -95,7 +106,16 @@ class WsManager:
                 endpoint=tokens.ws_token.endpoint,
             )
         self._session_uuid = self._uuid_to_bytes(tokens.session_id)
-        logger.debug(f"Tokens set, endpoint: {self._ws_token.endpoint[:50]}...")
+        self._token_version += 1
+        self._token_update_event.set()
+
+        if self._ws_token:
+            logger.debug(f"Tokens set, endpoint: {self._ws_token.endpoint[:50]}...")
+
+        tokens_changed = previous_token != self._ws_token or previous_session_uuid != self._session_uuid
+        if tokens_changed and self._ws and self._should_run:
+            logger.info("Received refreshed WebSocket tokens, reconnecting")
+            asyncio.create_task(self._close_for_token_refresh())
 
     def set_max_audio_quality(self, quality: int) -> None:
         """
@@ -301,8 +321,11 @@ class WsManager:
     async def _connection_loop(self) -> None:
         """Main connection loop with reconnection logic."""
         while self._should_run:
+            should_backoff = True
             try:
                 await self._connect_and_run()
+            except TokenRefreshRequired:
+                should_backoff = False
             except Exception as e:
                 logger.error(f"Connection error: {e}")
 
@@ -312,6 +335,9 @@ class WsManager:
             # Notify disconnection
             if self._on_disconnected:
                 self._on_disconnected()
+
+            if not should_backoff:
+                continue
 
             # Exponential backoff
             logger.info(f"Reconnecting in {self._reconnect_delay:.1f}s...")
@@ -323,10 +349,10 @@ class WsManager:
 
     async def _connect_and_run(self) -> None:
         """Connect, authenticate, and handle messages."""
-        if not self._ws_token or self._ws_token.is_expired():
-            logger.error("Token expired, cannot connect")
+        if not await self._wait_for_valid_token(buffer_s=TOKEN_REFRESH_BUFFER):
             return
 
+        assert self._ws_token is not None
         endpoint = self._ws_token.endpoint
         logger.info(f"Connecting to {endpoint[:50]}...")
 
@@ -365,6 +391,8 @@ class WsManager:
                 # Message receive loop
                 await self._receive_loop()
 
+        except TokenRefreshRequired:
+            raise
         except websockets.ConnectionClosed as e:
             logger.warning(f"Connection closed: {e.code} {e.reason}")
         except Exception as e:
@@ -422,9 +450,7 @@ class WsManager:
                 # Check token refresh
                 if self._ws_token and self._ws_token.is_expired(TOKEN_REFRESH_BUFFER):
                     logger.warning("Token expiring soon, need refresh")
-                    # Token refresh would be triggered here
-                    # For now, we'll need to wait for new tokens from app
-                    break
+                    raise TokenRefreshRequired()
 
             except websockets.ConnectionClosed:
                 raise
@@ -476,6 +502,36 @@ class WsManager:
                 logger.error(f"Failed to flush message: {e}")
 
         self._pending_messages.clear()
+
+    async def _wait_for_valid_token(self, buffer_s: int = 0) -> bool:
+        """Wait until a non-expired token is available or shutdown is requested."""
+        logged_wait = False
+
+        while self._should_run:
+            if self._ws_token and self._ws_token.is_valid() and not self._ws_token.is_expired(buffer_s):
+                return True
+
+            if not logged_wait:
+                logger.warning("Token expired, waiting for refreshed token from Qobuz app")
+                logged_wait = True
+
+            token_version = self._token_version
+            self._token_update_event.clear()
+            if self._token_version != token_version:
+                continue
+            await self._token_update_event.wait()
+
+        return False
+
+    async def _close_for_token_refresh(self) -> None:
+        """Close the current connection so refreshed tokens are used immediately."""
+        if not self._ws:
+            return
+
+        try:
+            await self._ws.close()
+        except Exception as e:
+            logger.debug(f"Failed to close WebSocket after token refresh: {e}")
 
     # -------------------------------------------------------------------------
     # Utilities
