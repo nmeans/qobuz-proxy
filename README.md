@@ -18,61 +18,7 @@ QobuzProxy solves this by acting as a virtual Qobuz Connect device on your netwo
 - Auto-detects device capabilities to select optimal audio quality
 - Runs on Raspberry Pi, Docker, or any Linux/macOS system
 
-## Installation
-
-```bash
-pip install qobuz-proxy
-
-# For local audio playback support (optional)
-pip install qobuz-proxy[local]
-```
-
-## Quick Start
-
-### 1. Find Your DLNA Renderer
-
-Use the built-in discovery tool to find DLNA devices on your network:
-
-```bash
-qobuz-proxy --discover
-```
-
-Example output:
-```
-Scanning for DLNA renderers (3.0s timeout)...
-
-Found 2 DLNA renderer(s):
-
-  Living Room Sonos
-    IP: 192.168.1.50
-    Port: 1400
-    Model: Sonos Play:5
-    Manufacturer: Sonos, Inc.
-
-  Bedroom HEOS
-    IP: 192.168.1.51
-    Port: 60006
-    Model: Denon HEOS 1
-    Manufacturer: Denon
-
-Config example (add to config.yaml):
-  backend:
-    dlna:
-      ip: "192.168.1.50"
-      port: 1400
-```
-
-Options:
-- `--timeout 10` - Increase discovery timeout (default: 3 seconds)
-- `--json` - Output as JSON for scripting
-
-### 2. Start the Proxy
-
-```bash
-qobuz-proxy --email your@email.com --password yourpassword --dlna-ip 192.168.1.50
-```
-
-### Audio Quality
+## Audio Quality
 
 By default (`max_quality: auto`), QobuzProxy queries your DLNA device's capabilities and automatically selects the best supported quality. You can also set a specific quality level:
 
@@ -84,39 +30,28 @@ By default (`max_quality: auto`), QobuzProxy queries your DLNA device's capabili
 | `7` | FLAC Hi-Res (24-bit/96kHz) |
 | `27` | FLAC Hi-Res (24-bit/192kHz) |
 
-```yaml
-qobuz:
-  max_quality: auto  # or 5, 6, 7, 27
-```
-
-Or with a config file:
-
-```bash
-qobuz-proxy --config config.yaml
-```
-
 ## Local Audio Playback
 
-QobuzProxy can also play audio directly through your machine's speakers or DAC, without needing a DLNA device. This requires the `local` extra dependencies:
+QobuzProxy can also play audio directly through your machine's speakers or DAC, without needing a DLNA device. Set the `QOBUZPROXY_BACKEND` environment variable to `local`:
 
 ```bash
-pip install qobuz-proxy[local]
+docker run -d --network host \
+  -e QOBUZ_EMAIL=your@email.com \
+  -e QOBUZ_PASSWORD=yourpassword \
+  -e QOBUZPROXY_BACKEND=local \
+  --device /dev/snd \
+  ghcr.io/leolobato/qobuz-proxy:latest
 ```
 
-Then start with the `--backend-type local` flag:
+Note: The `--device /dev/snd` flag gives the container access to the host's audio devices (Linux only).
+
+## Installation
+
+A pre-built Docker image is available from GitHub Container Registry:
 
 ```bash
-qobuz-proxy --email your@email.com --password yourpassword --backend-type local
+docker pull ghcr.io/leolobato/qobuz-proxy:latest
 ```
-
-You can list available audio devices and select a specific one (e.g. a USB DAC):
-
-```bash
-qobuz-proxy --list-audio-devices
-qobuz-proxy --backend-type local --audio-device "USB DAC" --email ...
-```
-
-## Docker Deployment
 
 ### Quick Start
 
@@ -126,7 +61,12 @@ qobuz-proxy --backend-type local --audio-device "USB DAC" --email ...
    nano .env  # Edit with your values
    ```
 
-2. Build and run:
+2. Run with the pre-built image:
+   ```bash
+   docker run -d --network host --env-file .env ghcr.io/leolobato/qobuz-proxy:latest
+   ```
+
+   Or build and run locally with Docker Compose:
    ```bash
    docker-compose up -d
    ```
@@ -180,31 +120,6 @@ The container includes a health check that verifies the HTTP server is respondin
 docker inspect --format='{{.State.Health.Status}}' qobuz-proxy
 ```
 
-## Development
-
-```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install with dev dependencies
-pip install -e ".[dev]"
-
-# Include local audio backend
-pip install -e ".[dev,local]"
-
-# Run
-qobuz-proxy --help
-
-# Test
-pytest
-
-# Code quality
-black qobuz_proxy/ tests/
-ruff check qobuz_proxy/ tests/
-mypy qobuz_proxy/
-```
-
 ## Acknowledgments
 
 This project is based on the Qobuz Connect reverse-engineering work done by [Tobias Guyer](https://github.com/tobiasguyer) in [StreamCore32](https://github.com/tobiasguyer/StreamCore32). Thanks to his efforts in figuring out the Qobuz Connect protocol, this project was possible.
@@ -215,4 +130,4 @@ This project was built almost entirely through agentic programming using [Claude
 
 ## License
 
-MIT
+[MIT](LICENSE)

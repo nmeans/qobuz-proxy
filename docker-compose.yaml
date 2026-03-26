@@ -10,9 +10,8 @@ version: "3.8"
 
 services:
   qobuz-proxy:
-    # Build from local Dockerfile or use pre-built image
-    build: .
-    # image: qobuz-proxy:latest  # Uncomment to use pre-built image
+    image: ghcr.io/leolobato/qobuz-proxy:latest
+    # build: .  # Uncomment to build from local Dockerfile instead
 
     container_name: qobuz-proxy
 
