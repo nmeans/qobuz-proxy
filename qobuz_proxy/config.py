@@ -10,6 +10,7 @@ Priority order (highest to lowest):
 
 import logging
 import os
+import platform
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -25,6 +26,13 @@ logger = logging.getLogger(__name__)
 AUTO_QUALITY = 0
 AUTO_FALLBACK_QUALITY = 6  # CD quality fallback when auto-detection fails
 VALID_QUALITIES = {0, 5, 6, 7, 27}
+
+# Default ports
+DEFAULT_HTTP_PORT = 8689
+DEFAULT_PROXY_PORT = 7120
+
+# Namespace UUID for deterministic speaker UUID generation
+_SPEAKER_UUID_NAMESPACE = uuid.UUID("f47ac10b-58cc-4372-a567-0e02b2c3d479")
 
 # Valid log levels
 VALID_LOG_LEVELS = {"debug", "info", "warning", "error"}
@@ -124,6 +132,24 @@ class LoggingConfig:
 
 
 @dataclass
+class SpeakerConfig:
+    """Per-speaker configuration for multi-speaker mode."""
+
+    name: str = "QobuzProxy"
+    uuid: str = ""
+    backend_type: str = "dlna"
+    max_quality: int = 27
+    http_port: int = 0  # 0 = auto-assign
+    bind_address: str = "0.0.0.0"
+    dlna_ip: str = ""
+    dlna_port: int = 1400
+    dlna_fixed_volume: bool = False
+    proxy_port: int = 0  # 0 = auto-assign
+    audio_device: str = "default"
+    audio_buffer_size: int = 2048
+
+
+@dataclass
 class Config:
     """Complete QobuzProxy configuration."""
 
@@ -132,6 +158,7 @@ class Config:
     backend: BackendConfig = field(default_factory=BackendConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    speakers: list[SpeakerConfig] = field(default_factory=list)
 
 
 def validate_email(email: str) -> bool:
@@ -199,6 +226,209 @@ def validate_config(config: Config) -> None:
 
     if errors:
         raise ConfigError("Configuration validation failed:\n  - " + "\n  - ".join(errors))
+
+
+def generate_speaker_uuid(speaker_name: str) -> str:
+    """Generate a deterministic UUID for a speaker based on hostname and name."""
+    return str(uuid.uuid5(_SPEAKER_UUID_NAMESPACE, f"{platform.node()}:{speaker_name}"))
+
+
+def _single_speaker_from_config(config: Config) -> SpeakerConfig:
+    """Map flat Config fields to a single SpeakerConfig."""
+    return SpeakerConfig(
+        name=config.device.name,
+        uuid=config.device.uuid,
+        backend_type=config.backend.type,
+        max_quality=config.qobuz.max_quality,
+        http_port=config.server.http_port,
+        bind_address=config.server.bind_address,
+        dlna_ip=config.backend.dlna.ip,
+        dlna_port=config.backend.dlna.port,
+        dlna_fixed_volume=config.backend.dlna.fixed_volume,
+        proxy_port=config.backend.dlna.proxy_port,
+        audio_device=config.backend.local.device,
+        audio_buffer_size=config.backend.local.buffer_size,
+    )
+
+
+def _assign_ports(speakers: list[SpeakerConfig]) -> None:
+    """Auto-assign http_port and proxy_port to speakers that have 0 (auto)."""
+    used_http: set[int] = {s.http_port for s in speakers if s.http_port != 0}
+    used_proxy: set[int] = {s.proxy_port for s in speakers if s.proxy_port != 0}
+
+    next_http = DEFAULT_HTTP_PORT
+    next_proxy = DEFAULT_PROXY_PORT
+
+    for speaker in speakers:
+        if speaker.http_port == 0:
+            while next_http in used_http:
+                next_http += 1
+            speaker.http_port = next_http
+            used_http.add(next_http)
+            next_http += 1
+
+        if speaker.backend_type == "dlna" and speaker.proxy_port == 0:
+            while next_proxy in used_proxy:
+                next_proxy += 1
+            speaker.proxy_port = next_proxy
+            used_proxy.add(next_proxy)
+            next_proxy += 1
+
+
+def _generate_uuids(speakers: list[SpeakerConfig]) -> None:
+    """Generate deterministic UUIDs for speakers that have an empty uuid."""
+    for speaker in speakers:
+        if not speaker.uuid:
+            speaker.uuid = generate_speaker_uuid(speaker.name)
+
+
+def _validate_speakers(speakers: list[SpeakerConfig]) -> None:
+    """
+    Validate speaker list.
+
+    Raises:
+        ConfigError: If speakers list is empty, has duplicate names, or port conflicts.
+    """
+    if not speakers:
+        raise ConfigError("At least one speaker must be configured")
+
+    names = [s.name for s in speakers]
+    if len(names) != len(set(names)):
+        seen: set[str] = set()
+        dupes: list[str] = []
+        for n in names:
+            if n in seen:
+                dupes.append(n)
+            else:
+                seen.add(n)
+        raise ConfigError(f"Duplicate speaker names: {dupes}")
+
+    http_ports = [s.http_port for s in speakers]
+    if len(http_ports) != len(set(http_ports)):
+        raise ConfigError(f"HTTP port conflicts among speakers: {http_ports}")
+
+    proxy_ports = [s.proxy_port for s in speakers if s.backend_type == "dlna" and s.proxy_port]
+    if len(proxy_ports) != len(set(proxy_ports)):
+        raise ConfigError(f"Proxy port conflicts among speakers: {proxy_ports}")
+
+
+def _parse_quality_value(value: Any) -> int:
+    """Parse a quality value, handling 'auto' string -> AUTO_QUALITY (0)."""
+    if isinstance(value, str) and value.lower() == "auto":
+        return AUTO_QUALITY
+    return int(value)
+
+
+def _parse_yaml_speakers(raw_speakers: list[dict], config: Config) -> list[SpeakerConfig]:
+    """Parse a list of raw YAML dicts into SpeakerConfig objects."""
+    speakers = []
+    for raw in raw_speakers:
+        speaker = SpeakerConfig(
+            name=raw.get("name", "QobuzProxy"),
+            uuid=raw.get("uuid", ""),
+            backend_type=raw.get("backend", "dlna"),
+            max_quality=_parse_quality_value(raw.get("max_quality", 27)),
+            http_port=int(raw.get("http_port", 0)),
+            bind_address=raw.get("bind_address", config.server.bind_address),
+            dlna_ip=raw.get("dlna_ip", ""),
+            dlna_port=int(raw.get("dlna_port", 1400)),
+            dlna_fixed_volume=bool(raw.get("dlna_fixed_volume", False)),
+            proxy_port=int(raw.get("proxy_port", 0)),
+            audio_device=raw.get("audio_device", "default"),
+            audio_buffer_size=int(raw.get("audio_buffer_size", 2048)),
+        )
+        speakers.append(speaker)
+    return speakers
+
+
+def _split_env(var: str) -> list[str]:
+    """Split a comma-separated environment variable value into a list of strings."""
+    value = os.environ.get(var, "")
+    if not value:
+        return []
+    return [v.strip() for v in value.split(",")]
+
+
+def _split_env_padded(var: str, count: int, default: str) -> list[str]:
+    """
+    Split env var, broadcasting a single value to count items.
+
+    Raises:
+        ConfigError: If length is not 1 and not count.
+    """
+    values = _split_env(var)
+    if not values:
+        return [default] * count
+    if len(values) == 1:
+        return values * count
+    if len(values) != count:
+        raise ConfigError(f"Env var {var} has {len(values)} values but expected 1 or {count}")
+    return values
+
+
+def _parse_env_speakers(config: Config) -> list[SpeakerConfig]:
+    """Parse multi-speaker configuration from environment variables."""
+    names = _split_env("QOBUZPROXY_DEVICE_NAME")
+    if not names:
+        return []
+
+    count = len(names)
+
+    backend_types = _split_env_padded("QOBUZPROXY_BACKEND", count, "dlna")
+    dlna_ips = _split_env_padded("QOBUZPROXY_DLNA_IP", count, "")
+    dlna_ports_raw = _split_env_padded("QOBUZPROXY_DLNA_PORT", count, "1400")
+    dlna_fixed_volumes_raw = _split_env_padded("QOBUZPROXY_DLNA_FIXED_VOLUME", count, "false")
+    http_ports_raw = _split_env_padded("QOBUZPROXY_HTTP_PORT", count, "0")
+    proxy_ports_raw = _split_env_padded("QOBUZPROXY_PROXY_PORT", count, "0")
+    audio_devices = _split_env_padded("QOBUZPROXY_AUDIO_DEVICE", count, "default")
+    audio_buffer_sizes_raw = _split_env_padded("QOBUZPROXY_AUDIO_BUFFER_SIZE", count, "2048")
+    qualities_raw = _split_env_padded("QOBUZ_MAX_QUALITY", count, "27")
+
+    speakers = []
+    for i, name in enumerate(names):
+        speaker = SpeakerConfig(
+            name=name,
+            backend_type=backend_types[i],
+            max_quality=_parse_quality_value(qualities_raw[i]),
+            http_port=int(http_ports_raw[i]),
+            bind_address=config.server.bind_address,
+            dlna_ip=dlna_ips[i],
+            dlna_port=int(dlna_ports_raw[i]),
+            dlna_fixed_volume=dlna_fixed_volumes_raw[i].lower() in ("true", "1", "yes", "on"),
+            proxy_port=int(proxy_ports_raw[i]),
+            audio_device=audio_devices[i],
+            audio_buffer_size=int(audio_buffer_sizes_raw[i]),
+        )
+        speakers.append(speaker)
+
+    return speakers
+
+
+def build_speaker_configs(
+    config: Config, raw_yaml_speakers: Optional[list[dict]] = None
+) -> list[SpeakerConfig]:
+    """
+    Build speaker configs from YAML, env vars, or flat config.
+
+    Priority: YAML speakers > comma-separated env vars > single flat config.
+    After building, assigns ports, generates UUIDs, and validates.
+    """
+    speakers: list[SpeakerConfig] = []
+
+    if raw_yaml_speakers is not None:
+        speakers = _parse_yaml_speakers(raw_yaml_speakers, config)
+    else:
+        env_speakers = _parse_env_speakers(config)
+        if env_speakers:
+            speakers = env_speakers
+        else:
+            speakers = [_single_speaker_from_config(config)]
+
+    _assign_ports(speakers)
+    _generate_uuids(speakers)
+    _validate_speakers(speakers)
+
+    return speakers
 
 
 def load_yaml_config(path: Path) -> dict:
@@ -333,9 +563,7 @@ def dict_to_config(d: dict) -> Config:
             config.backend.dlna.fixed_volume = dlna.get(
                 "fixed_volume", config.backend.dlna.fixed_volume
             )
-            config.backend.dlna.proxy_port = dlna.get(
-                "proxy_port", config.backend.dlna.proxy_port
-            )
+            config.backend.dlna.proxy_port = dlna.get("proxy_port", config.backend.dlna.proxy_port)
         if "local" in b:
             local = b["local"]
             config.backend.local.device = local.get("device", config.backend.local.device)
@@ -381,11 +609,14 @@ def load_config(
     """
     # Start with empty dict (defaults come from dataclasses)
     configs = []
+    raw_yaml_speakers: Optional[list[dict]] = None
 
     # 1. Load from file (lowest priority of explicit configs)
     if config_path:
         file_config = load_yaml_config(config_path)
         if file_config:
+            # Extract speakers key before merging into flat config
+            raw_yaml_speakers = file_config.pop("speakers", None)
             configs.append(file_config)
             logger.debug(f"Loaded config from {config_path}")
 
@@ -406,7 +637,13 @@ def load_config(
     # Convert to Config object (fills in defaults)
     config = dict_to_config(merged)
 
-    # Validate
-    validate_config(config)
+    # Build speaker configs
+    config.speakers = build_speaker_configs(config, raw_yaml_speakers)
+
+    # Validate only for single-speaker (non-multi) mode
+    device_name_env = os.environ.get("QOBUZPROXY_DEVICE_NAME", "")
+    is_multi = raw_yaml_speakers is not None or "," in device_name_env
+    if not is_multi:
+        validate_config(config)
 
     return config
