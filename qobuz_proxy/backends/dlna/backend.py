@@ -16,7 +16,7 @@ from qobuz_proxy.backends.types import (
     BufferStatus,
     PlaybackState,
 )
-from .client import DLNAClient, DLNAClientError
+from .client import DLNAClient, DLNAClientError, SoapResult
 from .capabilities import (
     DLNACapabilities,
     CapabilityCache,
@@ -89,6 +89,12 @@ class DLNABackend(AudioBackend):
         # Track when playback was started to avoid false track-ended events
         # during device loading/transition period
         self._playback_started_at: float = 0.0
+
+        # Gapless playback state
+        self._next_track_proxy_url: Optional[str] = None
+        self._next_track_metadata: Optional[BackendTrackMetadata] = None
+        self._gapless_supported: bool = True
+        self._current_proxy_url: Optional[str] = None
 
     # =========================================================================
     # Lifecycle
@@ -197,6 +203,10 @@ class DLNABackend(AudioBackend):
         if not self._client:
             raise RuntimeError("Not connected")
 
+        # Clear gapless state — explicit play invalidates armed next track
+        self._next_track_proxy_url = None
+        self._next_track_metadata = None
+
         self._current_metadata = metadata
         self._duration_ms = metadata.duration_ms
 
@@ -222,6 +232,7 @@ class DLNABackend(AudioBackend):
         if await self._client.set_av_transport_uri(actual_url, didl):
             if await self._client.play():
                 self._position_ms = 0
+                self._current_proxy_url = actual_url
                 self._playback_started_at = time.monotonic()
                 self._notify_state_change(PlaybackState.PLAYING)
                 logger.info(f"Playing: {metadata.artist} - {metadata.title}")
@@ -242,6 +253,10 @@ class DLNABackend(AudioBackend):
 
     async def stop(self) -> None:
         """Stop playback."""
+        # Clear gapless state
+        self._next_track_proxy_url = None
+        self._next_track_metadata = None
+
         if self._client and await self._client.stop():
             self._position_ms = 0
             self._playback_started_at = 0.0  # Clear grace period
@@ -363,6 +378,69 @@ class DLNABackend(AudioBackend):
         return None
 
     # =========================================================================
+    # Gapless Playback
+    # =========================================================================
+
+    @property
+    def supports_gapless(self) -> bool:
+        """Whether this backend supports gapless playback."""
+        return self._gapless_supported
+
+    async def set_next_track(
+        self, url: str, metadata: BackendTrackMetadata, queue_item_id: int = 0
+    ) -> bool:
+        """Prepare the next track for gapless transition."""
+        if not self._client or not self._gapless_supported:
+            return False
+
+        # Determine content type
+        content_type = "audio/flac"
+        if ".mp3" in url.lower() or "format=5" in url.lower():
+            content_type = "audio/mpeg"
+
+        # Register with proxy server using unique key
+        actual_url = url
+        if self._proxy_server:
+            proxy_key = f"{metadata.track_id}_{queue_item_id}"
+            actual_url = self._proxy_server.register_track(
+                track_id=metadata.track_id,
+                qobuz_url=url,
+                content_type=content_type,
+                proxy_key=proxy_key,
+            )
+            logger.debug(f"Gapless: registered next track proxy URL: {actual_url}")
+
+        # Build DIDL-Lite metadata
+        didl = self._build_didl(actual_url, metadata, content_type)
+
+        # Send to device
+        result: SoapResult = await self._client.set_next_av_transport_uri(actual_url, didl)
+
+        if result.success:
+            self._next_track_proxy_url = actual_url
+            self._next_track_metadata = metadata
+            logger.info(f"Gapless: armed next track: {metadata.artist} - {metadata.title}")
+            return True
+
+        if result.is_permanent_failure:
+            self._gapless_supported = False
+            logger.warning(
+                f"Gapless: disabled — device does not support SetNextAVTransportURI "
+                f"(error {result.error_code}: {result.error_description})"
+            )
+        else:
+            logger.warning(
+                "Gapless: failed to arm next track (transient error), "
+                "will retry on next poll cycle"
+            )
+        return False
+
+    async def clear_next_track(self) -> None:
+        """Clear prepared next track."""
+        self._next_track_proxy_url = None
+        self._next_track_metadata = None
+
+    # =========================================================================
     # Internal
     # =========================================================================
 
@@ -384,12 +462,45 @@ class DLNABackend(AudioBackend):
                     < PLAYBACK_START_GRACE_PERIOD_SECONDS
                 )
 
+                # Gapless transition detection: check if device has moved to next track
+                if (
+                    new_state == PlaybackState.PLAYING
+                    and self._next_track_proxy_url
+                    and self._client
+                ):
+                    current_uri = await self._client.get_media_info()
+                    if current_uri and current_uri == self._next_track_proxy_url:
+                        logger.info("Gapless: transition detected — device moved to next track")
+                        # Update state to reflect the new track
+                        self._current_metadata = self._next_track_metadata
+                        self._current_proxy_url = self._next_track_proxy_url
+                        if self._next_track_metadata:
+                            self._duration_ms = self._next_track_metadata.duration_ms
+                        self._position_ms = 0
+                        self._playback_started_at = time.monotonic()
+                        # Clear gapless state
+                        self._next_track_proxy_url = None
+                        self._next_track_metadata = None
+                        # Notify player
+                        self._notify_next_track_started()
+                        self._notify_position_update(0)
+                        continue
+
                 # Detect state changes
                 if new_state != self._state:
                     logger.debug(f"State changed: {self._state} -> {new_state}")
 
                     # Check for track end before updating state
                     if self._state == PlaybackState.PLAYING and new_state == PlaybackState.STOPPED:
+                        # If gapless was armed but device stopped, clear and fall through
+                        if self._next_track_proxy_url:
+                            logger.debug(
+                                "Gapless: device stopped despite armed next track, "
+                                "falling through to normal track-ended"
+                            )
+                            self._next_track_proxy_url = None
+                            self._next_track_metadata = None
+
                         if in_grace_period:
                             # During grace period, ignore STOPPED state entirely
                             # This prevents false track-ended events while device is loading

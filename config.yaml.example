@@ -27,3 +27,25 @@ server:
 
 logging:
   level: "info"                 # debug, info, warning, error
+
+# --- Multi-Speaker Configuration ---
+# Use 'speakers' instead of 'device'/'backend'/'server' for multiple speakers.
+# Each speaker appears as a separate device in the Qobuz app.
+# Ports are auto-assigned unless specified.
+#
+# speakers:
+#   - name: "Living Room"
+#     backend: dlna
+#     dlna_ip: "192.168.1.50"
+#     max_quality: auto
+#     # http_port: 8689          # optional, auto-assigned
+#     # proxy_port: 7120         # optional, auto-assigned
+#
+#   - name: "Office"
+#     backend: dlna
+#     dlna_ip: "192.168.1.51"
+#     max_quality: 7
+#
+#   - name: "Headphones"
+#     backend: local
+#     audio_device: "Built-in Output"

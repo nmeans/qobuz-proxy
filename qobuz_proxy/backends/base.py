@@ -23,6 +23,7 @@ PositionUpdateCallback = Callable[[int], None]  # position_ms
 BufferStatusCallback = Callable[[BufferStatus], None]
 TrackEndedCallback = Callable[[], None]
 PlaybackErrorCallback = Callable[[str], None]  # error_message
+NextTrackStartedCallback = Callable[[], None]
 
 
 class AudioBackend(ABC):
@@ -52,6 +53,7 @@ class AudioBackend(ABC):
         self._on_buffer_status: Optional[BufferStatusCallback] = None
         self._on_track_ended: Optional[TrackEndedCallback] = None
         self._on_playback_error: Optional[PlaybackErrorCallback] = None
+        self._on_next_track_started: Optional[NextTrackStartedCallback] = None
 
     # =========================================================================
     # Playback Control - Required
@@ -124,6 +126,29 @@ class AudioBackend(ABC):
     async def get_buffer_status(self) -> BufferStatus:
         """Get buffer status. Default returns OK."""
         return BufferStatus.OK
+
+    # =========================================================================
+    # Gapless Playback - Optional
+    # =========================================================================
+
+    @property
+    def supports_gapless(self) -> bool:
+        """Whether this backend supports gapless playback. Default: False."""
+        return False
+
+    async def set_next_track(
+        self, url: str, metadata: BackendTrackMetadata, queue_item_id: int = 0
+    ) -> bool:
+        """Prepare next track for gapless transition. Default: returns False."""
+        return False
+
+    async def clear_next_track(self) -> None:
+        """Cancel prepared next track. Default: no-op."""
+        pass
+
+    def on_next_track_started(self, callback: Optional[NextTrackStartedCallback]) -> None:
+        """Register callback for gapless transition events."""
+        self._on_next_track_started = callback
 
     # =========================================================================
     # Lifecycle - Required
@@ -212,6 +237,14 @@ class AudioBackend(ABC):
                 self._on_playback_error(message)
             except Exception as e:
                 logger.error(f"Playback error callback error: {e}")
+
+    def _notify_next_track_started(self) -> None:
+        """Notify listeners that a gapless transition to the next track occurred."""
+        if self._on_next_track_started:
+            try:
+                self._on_next_track_started()
+            except Exception as e:
+                logger.error(f"Next track started callback error: {e}")
 
     # =========================================================================
     # Info

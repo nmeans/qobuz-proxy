@@ -139,6 +139,7 @@ class AudioProxyServer:
         track_id: str,
         qobuz_url: str,
         content_type: str = "audio/flac",
+        proxy_key: Optional[str] = None,
     ) -> str:
         """
         Register a track for proxying.
@@ -147,11 +148,15 @@ class AudioProxyServer:
             track_id: Qobuz track ID
             qobuz_url: Current Qobuz streaming URL
             content_type: MIME type of the audio
+            proxy_key: Optional key for the proxy URL path (defaults to track_id).
+                       Use a unique key like "{track_id}_{queue_item_id}" to produce
+                       distinct proxy URLs for duplicate tracks in a queue.
 
         Returns:
             Local proxy URL for the track
         """
-        self._tracks[track_id] = RegisteredTrack(
+        key = proxy_key or track_id
+        self._tracks[key] = RegisteredTrack(
             track_id=track_id,
             qobuz_url=qobuz_url,
             content_type=content_type,
@@ -160,9 +165,9 @@ class AudioProxyServer:
 
         # Determine extension from content type
         ext = "flac" if "flac" in content_type else "mp3"
-        proxy_url = f"{self.base_url}/audio/{track_id}.{ext}"
+        proxy_url = f"{self.base_url}/audio/{key}.{ext}"
 
-        logger.debug(f"Registered track {track_id} -> {proxy_url}")
+        logger.debug(f"Registered track {track_id} (key={key}) -> {proxy_url}")
         return proxy_url
 
     def unregister_track(self, track_id: str) -> None:

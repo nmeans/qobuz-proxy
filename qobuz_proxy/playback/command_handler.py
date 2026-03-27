@@ -53,6 +53,9 @@ class PlaybackCommandHandler:
         # Store next track info for auto-advance (from SET_STATE nextQueueItem)
         self._next_track_info: Optional[dict] = None
 
+        # Callback when next track info changes (for gapless re-arming)
+        self._on_next_track_changed: Optional[Callable[[], Awaitable[None]]] = None
+
     def get_message_types(self) -> list[int]:
         """Get list of message types this handler processes."""
         return [
@@ -118,16 +121,29 @@ class PlaybackCommandHandler:
             )
 
         # Extract and store next queue item for auto-advance
+        next_track_changed = False
         if state.HasField("nextQueueItem"):
             next_item = state.nextQueueItem
-            self._next_track_info = {
+            new_next_info = {
                 "queueItemId": next_item.queueItemId,
                 "trackId": str(next_item.trackId),
                 "contextUuid": next_item.contextUuid if next_item.contextUuid else None,
             }
+            # Detect change by queueItemId (handles same track at different positions)
+            old_queue_item_id = (
+                self._next_track_info.get("queueItemId") if self._next_track_info else None
+            )
+            if new_next_info["queueItemId"] != old_queue_item_id:
+                next_track_changed = True
+            self._next_track_info = new_next_info
             logger.debug(
                 f"Next track stored: queueItemId={next_item.queueItemId}, trackId={next_item.trackId}"
             )
+        elif self._next_track_info is not None:
+            # nextQueueItem disappeared — clear and notify
+            self._next_track_info = None
+            next_track_changed = True
+            logger.debug("Next track cleared (nextQueueItem not present in SET_STATE)")
 
         # Check if the app is telling us to play a different track than what we're playing
         player_track = self.player.current_track
@@ -160,6 +176,10 @@ class PlaybackCommandHandler:
             elif proto_state == 1:  # STOPPED
                 await self.player.stop_playback()
 
+        # Notify gapless system about next track change (after state handling)
+        if next_track_changed and self._on_next_track_changed:
+            await self._on_next_track_changed()
+
     def get_next_track_info(self) -> Optional[dict]:
         """Get the stored next track info for auto-advance."""
         return self._next_track_info
@@ -167,6 +187,10 @@ class PlaybackCommandHandler:
     def clear_next_track_info(self) -> None:
         """Clear the stored next track info after it's been used."""
         self._next_track_info = None
+
+    def set_on_next_track_changed(self, callback: Optional[Callable[[], Awaitable[None]]]) -> None:
+        """Set callback for when next track info changes (for gapless re-arming)."""
+        self._on_next_track_changed = callback
 
     async def _handle_set_active(self, message: Any) -> None:
         """

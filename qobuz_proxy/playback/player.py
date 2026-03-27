@@ -85,6 +85,14 @@ class QobuzPlayer:
         self._get_next_track_callback: Optional[Callable[[], Optional[dict]]] = None
         self._clear_next_track_callback: Optional[Callable[[], None]] = None
 
+        # Gapless playback state
+        self._pending_next_track: Optional[dict] = None
+        self._gapless_armed: bool = False
+        self._transition_generation: int = 0
+
+        # Callback for next track info changes (from command handler)
+        self._on_next_track_changed_callback: Optional[Callable[[], None]] = None
+
         # Background tasks
         self._playback_monitor_task: Optional[asyncio.Task] = None
         self._state_update_task: Optional[asyncio.Task] = None
@@ -98,6 +106,7 @@ class QobuzPlayer:
         self.backend.on_track_ended(self._on_track_ended)
         self.backend.on_playback_error(self._on_playback_error)
         self.backend.on_position_update(self._on_position_update)
+        self.backend.on_next_track_started(self._on_next_track_started)
 
         logger.info("QobuzPlayer initialized")
 
@@ -346,9 +355,11 @@ class QobuzPlayer:
             logger.info("Playback resumed")
             return True
 
-        # Already playing
+        # Already playing — seek if position changed
         if self._state == PlaybackState.PLAYING:
-            logger.debug("Already playing")
+            if position_ms > 0:
+                logger.info(f"Scrubbing to {position_ms}ms while playing")
+                await self.seek(position_ms)
             return True
 
         # Get track to play (if not already loaded)
@@ -447,6 +458,9 @@ class QobuzPlayer:
 
         Resets position to 0 but keeps queue position.
         """
+        # Clear gapless state — explicit stop
+        self._clear_gapless_state()
+
         await self.backend.stop()
 
         self._state = PlaybackState.STOPPED
@@ -526,6 +540,9 @@ class QobuzPlayer:
         Returns:
             True if playback started successfully
         """
+        # Clear gapless state — explicit track change
+        self._clear_gapless_state()
+
         logger.info(
             f"Play track requested: track_id={track_id}, queue_item_id={queue_item_id}, pos={position_ms}ms"
         )
@@ -595,6 +612,9 @@ class QobuzPlayer:
         Returns:
             True if advanced to next track, False if at end
         """
+        # Clear gapless state — explicit skip
+        self._clear_gapless_state()
+
         logger.debug("Next track command")
 
         # Stop current playback
@@ -628,6 +648,9 @@ class QobuzPlayer:
         Returns:
             True if action taken successfully
         """
+        # Clear gapless state — explicit navigation
+        self._clear_gapless_state()
+
         logger.debug("Previous track command")
 
         current_pos = self.current_position_ms
@@ -726,7 +749,9 @@ class QobuzPlayer:
                 if actual_quality:
                     await self._file_quality_report_callback(actual_quality)
                 else:
-                    logger.debug(f"No actual_quality for track {track.track_id}, skipping file quality report")
+                    logger.debug(
+                        f"No actual_quality for track {track.track_id}, skipping file quality report"
+                    )
 
             # Start playback on backend
             await self.backend.play(url, backend_meta)
@@ -789,6 +814,11 @@ class QobuzPlayer:
 
     async def _handle_track_ended(self) -> None:
         """Handle natural track end."""
+        # Clear gapless state — prevents stale gapless callbacks from racing
+        self._transition_generation += 1
+        self._gapless_armed = False
+        self._pending_next_track = None
+
         logger.info("Track ended naturally")
 
         # Get queue state to check repeat mode
@@ -835,6 +865,142 @@ class QobuzPlayer:
         self._set_position(position_ms)
 
     # =========================================================================
+    # Gapless Playback
+    # =========================================================================
+
+    def _clear_gapless_state(self) -> None:
+        """Clear all gapless state and increment generation."""
+        self._transition_generation += 1
+        self._gapless_armed = False
+        self._pending_next_track = None
+
+    async def _prepare_next_track_for_gapless(self) -> None:
+        """Prepare the next track for gapless playback on the backend."""
+        if not self.backend.supports_gapless or self._gapless_armed:
+            return
+
+        if not self._get_next_track_callback:
+            return
+
+        next_track_info = self._get_next_track_callback()
+        if not next_track_info:
+            return
+
+        track_id = next_track_info["trackId"]
+        queue_item_id = next_track_info["queueItemId"]
+
+        try:
+            # Fetch URL and metadata
+            url = await self._get_track_url(track_id)
+            if not url:
+                logger.debug(f"Gapless: failed to get URL for next track {track_id}")
+                return
+
+            meta = await self._get_track_metadata(track_id)
+
+            backend_meta = BackendTrackMetadata(
+                track_id=track_id,
+                title=meta.get("title", f"Track {track_id}") if meta else f"Track {track_id}",
+                artist=meta.get("artist", "") if meta else "",
+                album=meta.get("album", "") if meta else "",
+                duration_ms=meta.get("duration_ms", 0) if meta else 0,
+                artwork_url=meta.get("artwork_url", "") if meta else "",
+            )
+
+            success = await self.backend.set_next_track(url, backend_meta, queue_item_id)
+            if success:
+                self._pending_next_track = {
+                    "trackId": track_id,
+                    "queueItemId": queue_item_id,
+                    "url": url,
+                    "metadata": meta,
+                    "backend_meta": backend_meta,
+                }
+                self._gapless_armed = True
+                logger.info(f"Gapless: armed next track {track_id}")
+            else:
+                logger.debug(f"Gapless: backend rejected next track {track_id}")
+
+        except Exception as e:
+            logger.warning(f"Gapless: failed to prepare next track: {e}")
+
+    def _on_next_track_started(self) -> None:
+        """Callback when backend reports gapless transition to next track."""
+        logger.debug("Gapless: next track started callback from backend")
+        asyncio.create_task(self._handle_gapless_transition())
+
+    async def _handle_gapless_transition(self) -> None:
+        """Handle a gapless transition to the next track."""
+        # Capture generation to detect concurrent state changes (e.g. explicit skip/stop)
+        my_generation = self._transition_generation
+
+        if not self._pending_next_track or not self._gapless_armed:
+            logger.warning("Gapless: transition callback but no pending track")
+            return
+
+        # Check generation hasn't changed (guards against concurrent transitions)
+        if my_generation != self._transition_generation:
+            logger.debug("Gapless: stale transition callback, ignoring")
+            return
+
+        next_info = self._pending_next_track
+        track_id = next_info["trackId"]
+        queue_item_id = next_info["queueItemId"]
+        meta = next_info.get("metadata")
+
+        logger.info(f"Gapless: transitioning to track {track_id}")
+
+        # Update current track (no stop/start cycle)
+        self._current_track = QueueTrack(
+            queue_item_id=queue_item_id,
+            track_id=track_id,
+            streaming_url=next_info.get("url"),
+            metadata=meta or {},
+            duration_ms=meta.get("duration_ms", 0) if meta else 0,
+        )
+        self._current_duration_ms = self._current_track.duration_ms
+
+        # Reset position
+        self._position_value_ms = 0
+        self._position_timestamp_ms = int(time.time() * 1000)
+
+        # Clear gapless state
+        self._pending_next_track = None
+        self._gapless_armed = False
+
+        # Clear next track info from command handler
+        if self._clear_next_track_callback:
+            self._clear_next_track_callback()
+
+        # Report file quality
+        actual_quality = self.metadata.get_track_actual_quality(track_id)
+        backend_meta = next_info.get("backend_meta")
+        if backend_meta:
+            self.metadata.log_now_playing_info(backend_meta, actual_quality)
+        if self._file_quality_report_callback and actual_quality:
+            await self._file_quality_report_callback(actual_quality)
+
+        # Send state update
+        await self._send_state_update()
+
+        # Try to arm the next next track
+        await self._prepare_next_track_for_gapless()
+
+    async def _on_next_track_info_changed(self) -> None:
+        """Called when command handler reports the next track info has changed."""
+        logger.debug("Gapless: next track info changed, re-arming")
+
+        # Clear current gapless arming
+        self._transition_generation += 1
+        self._gapless_armed = False
+        self._pending_next_track = None
+        await self.backend.clear_next_track()
+
+        # Re-arm with new track if playing
+        if self._state == PlaybackState.PLAYING:
+            await self._prepare_next_track_for_gapless()
+
+    # =========================================================================
     # Background Tasks
     # =========================================================================
 
@@ -859,6 +1025,10 @@ class QobuzPlayer:
                     # Update position from backend
                     position = await self.backend.get_position()
                     self._set_position(position)
+
+                    # Try to arm gapless if not already armed
+                    if not self._gapless_armed:
+                        await self._prepare_next_track_for_gapless()
 
             except asyncio.CancelledError:
                 break

@@ -15,7 +15,7 @@ from .capabilities import (
     QOBUZ_QUALITY_96K,
     QOBUZ_QUALITY_192K,
 )
-from .client import DLNAClient, DLNAClientError, DLNADeviceInfo
+from .client import DLNAClient, DLNAClientError, DLNADeviceInfo, SoapResult
 from .proxy_server import AudioProxyServer, RegisteredTrack
 from .url_provider import StreamingURLProvider
 from .metadata_url_provider import MetadataServiceURLProvider
@@ -36,6 +36,7 @@ __all__ = [
     "DLNAClient",
     "DLNAClientError",
     "DLNADeviceInfo",
+    "SoapResult",
     "AudioProxyServer",
     "RegisteredTrack",
     "StreamingURLProvider",

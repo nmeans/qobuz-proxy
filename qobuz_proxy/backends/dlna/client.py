@@ -32,6 +32,23 @@ REQUEST_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass
+class SoapResult:
+    """Result from a SOAP action, including error classification."""
+
+    success: bool
+    body: Optional[str] = None
+    # UPnP error code from device (e.g. 401, 602)
+    error_code: Optional[int] = None
+    error_description: Optional[str] = None
+
+    @property
+    def is_permanent_failure(self) -> bool:
+        """Check if the error indicates the device doesn't support this action."""
+        # 401 = Invalid Action, 602 = Invalid Args
+        return self.error_code in (401, 602)
+
+
+@dataclass
 class DLNADeviceInfo:
     """DLNA device information from UPnP description."""
 
@@ -258,6 +275,57 @@ class DLNAClient:
                 logger.debug("GetPositionInfo: RelTime not found in response")
         else:
             logger.debug("GetPositionInfo: No response from SOAP action")
+        return None
+
+    async def set_next_av_transport_uri(
+        self,
+        url: str,
+        metadata: str = "",
+    ) -> SoapResult:
+        """
+        Set the next URI for gapless playback.
+
+        Args:
+            url: Audio URL for next track
+            metadata: DIDL-Lite metadata XML
+
+        Returns:
+            SoapResult with success/failure and error classification
+        """
+        if not self.device_info:
+            return SoapResult(success=False)
+
+        return await self._soap_action_detailed(
+            self.device_info.av_transport_url,
+            UPNP_AV_TRANSPORT,
+            "SetNextAVTransportURI",
+            {
+                "InstanceID": "0",
+                "NextURI": url,
+                "NextURIMetaData": metadata,
+            },
+            max_retries=1,
+        )
+
+    async def get_media_info(self) -> Optional[str]:
+        """
+        Get current media info including CurrentURI.
+
+        Returns:
+            CurrentURI string, or None if unavailable
+        """
+        if not self.device_info:
+            return None
+
+        response = await self._soap_action(
+            self.device_info.av_transport_url,
+            UPNP_AV_TRANSPORT,
+            "GetMediaInfo",
+            {"InstanceID": "0"},
+        )
+
+        if response:
+            return self._parse_xml_value_exact(response, "CurrentURI")
         return None
 
     # =========================================================================
@@ -510,9 +578,26 @@ class DLNAClient:
         Returns:
             Response body or None on failure
         """
+        result = await self._soap_action_detailed(url, service, action, args, max_retries)
+        return result.body if result.success else None
+
+    async def _soap_action_detailed(
+        self,
+        url: str,
+        service: str,
+        action: str,
+        args: Dict[str, str],
+        max_retries: Optional[int] = None,
+    ) -> SoapResult:
+        """
+        Send SOAP action with retry logic, returning detailed result.
+
+        Returns:
+            SoapResult with success/failure info and UPnP error codes
+        """
         if not url or not self._session:
             logger.warning(f"No URL for service {service}")
-            return None
+            return SoapResult(success=False)
 
         retries = max_retries if max_retries is not None else MAX_RETRIES
         envelope = self._build_soap_envelope(service, action, args)
@@ -522,20 +607,35 @@ class DLNAClient:
         }
 
         last_error = None
+        last_error_code: Optional[int] = None
+        last_error_desc: Optional[str] = None
         for attempt in range(retries):
             try:
                 async with self._session.post(url, data=envelope, headers=headers) as response:
                     if response.status == 200:
-                        return await response.text()
+                        return SoapResult(success=True, body=await response.text())
                     else:
                         text = await response.text()
                         logger.warning(f"SOAP {action} failed ({response.status}): {text[:500]}")
                         # Try to extract UPnP error details
-                        error_code = self._parse_xml_value(text, "errorCode")
+                        error_code_str = self._parse_xml_value(text, "errorCode")
                         error_desc = self._parse_xml_value(text, "errorDescription")
-                        if error_code or error_desc:
+                        if error_code_str:
+                            try:
+                                last_error_code = int(error_code_str)
+                            except ValueError:
+                                pass
+                        last_error_desc = error_desc
+                        if error_code_str or error_desc:
                             logger.warning(
-                                f"UPnP error: code={error_code}, description={error_desc}"
+                                f"UPnP error: code={error_code_str}, description={error_desc}"
+                            )
+                        # Don't retry permanent failures
+                        if last_error_code in (401, 602):
+                            return SoapResult(
+                                success=False,
+                                error_code=last_error_code,
+                                error_description=last_error_desc,
                             )
                         last_error = f"HTTP {response.status}"
 
@@ -550,7 +650,11 @@ class DLNAClient:
             logger.error(f"SOAP {action} failed after {retries} attempts: {last_error}")
         else:
             logger.warning(f"SOAP {action} failed: {last_error}")
-        return None
+        return SoapResult(
+            success=False,
+            error_code=last_error_code,
+            error_description=last_error_desc,
+        )
 
     def _build_soap_envelope(
         self,
@@ -593,6 +697,17 @@ class DLNAClient:
             root = ET.fromstring(xml_text)
             for elem in root.iter():
                 if tag_name in elem.tag:
+                    return elem.text
+        except ET.ParseError:
+            pass
+        return None
+
+    def _parse_xml_value_exact(self, xml_text: str, tag_name: str) -> Optional[str]:
+        """Extract value from XML response by exact local tag name (without namespace)."""
+        try:
+            root = ET.fromstring(xml_text)
+            for elem in root.iter():
+                if elem.tag.split("}")[-1] == tag_name:
                     return elem.text
         except ET.ParseError:
             pass
