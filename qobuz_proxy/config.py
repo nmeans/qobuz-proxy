@@ -311,6 +311,20 @@ def _validate_speakers(speakers: list[SpeakerConfig]) -> None:
     if len(proxy_ports) != len(set(proxy_ports)):
         raise ConfigError(f"Proxy port conflicts among speakers: {proxy_ports}")
 
+    # Per-speaker field validation
+    errors = []
+    for s in speakers:
+        if s.backend_type == "dlna" and not s.dlna_ip:
+            errors.append(f"Speaker '{s.name}': DLNA IP address is required")
+        if s.backend_type not in ("dlna", "local", "stub"):
+            errors.append(f"Speaker '{s.name}': unknown backend type '{s.backend_type}'")
+        if s.http_port and not validate_port(s.http_port):
+            errors.append(f"Speaker '{s.name}': invalid HTTP port {s.http_port}")
+        if s.proxy_port and not validate_port(s.proxy_port):
+            errors.append(f"Speaker '{s.name}': invalid proxy port {s.proxy_port}")
+    if errors:
+        raise ConfigError("Speaker validation failed:\n  - " + "\n  - ".join(errors))
+
 
 def _parse_quality_value(value: Any) -> int:
     """Parse a quality value, handling 'auto' string -> AUTO_QUALITY (0)."""

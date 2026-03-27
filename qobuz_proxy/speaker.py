@@ -435,7 +435,7 @@ class Speaker:
         """Handle protocol error messages received from the Qobuz server."""
         # msg is a protobuf message; use hasattr for safe access in tests
         error = getattr(msg, "error", None)
-        has_error = callable(getattr(msg, "HasField", None)) and msg.HasField("error")  # type: ignore[union-attr]
+        has_error = callable(getattr(msg, "HasField", None)) and msg.HasField("error")  # type: ignore[attr-defined]
         if has_error and error:
             logger.error(
                 f"[{self.name}] Protocol error: code={error.code}, message={error.message}"

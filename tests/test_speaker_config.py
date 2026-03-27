@@ -278,24 +278,28 @@ class TestUUIDGeneration:
 class TestSpeakerValidation:
     def test_duplicate_names_rejected(self):
         speakers = [
-            SpeakerConfig(name="Same", http_port=8689, proxy_port=7120),
-            SpeakerConfig(name="Same", http_port=8690, proxy_port=7121),
+            SpeakerConfig(name="Same", http_port=8689, proxy_port=7120, dlna_ip="1.2.3.4"),
+            SpeakerConfig(name="Same", http_port=8690, proxy_port=7121, dlna_ip="1.2.3.5"),
         ]
         with pytest.raises(ConfigError, match="Duplicate speaker names"):
             _validate_speakers(speakers)
 
     def test_http_port_conflict_rejected(self):
         speakers = [
-            SpeakerConfig(name="A", http_port=8689, proxy_port=7120),
-            SpeakerConfig(name="B", http_port=8689, proxy_port=7121),
+            SpeakerConfig(name="A", http_port=8689, proxy_port=7120, dlna_ip="1.2.3.4"),
+            SpeakerConfig(name="B", http_port=8689, proxy_port=7121, dlna_ip="1.2.3.5"),
         ]
         with pytest.raises(ConfigError, match="HTTP port conflicts"):
             _validate_speakers(speakers)
 
     def test_proxy_port_conflict_rejected(self):
         speakers = [
-            SpeakerConfig(name="A", backend_type="dlna", http_port=8689, proxy_port=7120),
-            SpeakerConfig(name="B", backend_type="dlna", http_port=8690, proxy_port=7120),
+            SpeakerConfig(
+                name="A", backend_type="dlna", http_port=8689, proxy_port=7120, dlna_ip="1.2.3.4"
+            ),
+            SpeakerConfig(
+                name="B", backend_type="dlna", http_port=8690, proxy_port=7120, dlna_ip="1.2.3.5"
+            ),
         ]
         with pytest.raises(ConfigError, match="Proxy port conflicts"):
             _validate_speakers(speakers)
@@ -304,10 +308,24 @@ class TestSpeakerValidation:
         with pytest.raises(ConfigError, match="At least one speaker"):
             _validate_speakers([])
 
+    def test_dlna_speaker_missing_ip_rejected(self):
+        speakers = [
+            SpeakerConfig(name="Bad", backend_type="dlna", http_port=8689, dlna_ip=""),
+        ]
+        with pytest.raises(ConfigError, match="DLNA IP address is required"):
+            _validate_speakers(speakers)
+
+    def test_unknown_backend_type_rejected(self):
+        speakers = [
+            SpeakerConfig(name="Bad", backend_type="bluetooth", http_port=8689),
+        ]
+        with pytest.raises(ConfigError, match="unknown backend type"):
+            _validate_speakers(speakers)
+
     def test_valid_speakers_pass(self):
         speakers = [
-            SpeakerConfig(name="A", http_port=8689, proxy_port=7120),
-            SpeakerConfig(name="B", http_port=8690, proxy_port=7121),
+            SpeakerConfig(name="A", http_port=8689, proxy_port=7120, dlna_ip="192.168.1.50"),
+            SpeakerConfig(name="B", http_port=8690, proxy_port=7121, dlna_ip="192.168.1.51"),
         ]
         # Should not raise
         _validate_speakers(speakers)
@@ -372,6 +390,7 @@ backend:
         monkeypatch.delenv("QOBUZPROXY_DEVICE_NAME", raising=False)
         config = Config()
         config.device.name = "Flat Speaker"
+        config.backend.dlna.ip = "192.168.1.50"
         config.server.http_port = 8689
         config.backend.dlna.proxy_port = 7120
         speakers = build_speaker_configs(config)
