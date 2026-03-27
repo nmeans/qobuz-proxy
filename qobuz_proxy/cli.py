@@ -261,20 +261,19 @@ def args_to_dict(args: argparse.Namespace) -> dict:
 
 def log_config(config: Config) -> None:
     """Log configuration summary (without sensitive data)."""
-    logger.info(f"Device: {config.device.name} ({config.device.uuid[:8]}...)")
-    if config.backend.type == "dlna":
-        logger.info(f"DLNA target: {config.backend.dlna.ip}:{config.backend.dlna.port}")
-        if config.backend.dlna.fixed_volume:
-            logger.info("Volume control: disabled (fixed_volume=true)")
-    elif config.backend.type == "local":
-        logger.info(f"Audio device: {config.backend.local.device}")
-        logger.info(f"Audio buffer size: {config.backend.local.buffer_size} frames")
-    logger.info(f"HTTP server: {config.server.bind_address}:{config.server.http_port}")
-    if config.backend.type == "dlna":
-        logger.info(
-            f"Proxy server: {config.server.bind_address}:{config.backend.dlna.proxy_port}"
-        )
-    logger.info(f"Max quality: {config.qobuz.max_quality}")
+    for i, sc in enumerate(config.speakers):
+        prefix = f"Speaker {i + 1}" if len(config.speakers) > 1 else "Device"
+        logger.info(f"{prefix}: {sc.name} ({sc.uuid[:8]}...)")
+        if sc.backend_type == "dlna":
+            logger.info(f"  DLNA target: {sc.dlna_ip}:{sc.dlna_port}")
+            if sc.dlna_fixed_volume:
+                logger.info("  Volume control: disabled (fixed_volume=true)")
+            logger.info(f"  Proxy server: {sc.bind_address}:{sc.proxy_port}")
+        elif sc.backend_type == "local":
+            logger.info(f"  Audio device: {sc.audio_device}")
+            logger.info(f"  Buffer size: {sc.audio_buffer_size} frames")
+        logger.info(f"  HTTP server: {sc.bind_address}:{sc.http_port}")
+        logger.info(f"  Max quality: {sc.max_quality}")
 
 
 async def run_discovery(timeout: float, json_output: bool) -> int:
