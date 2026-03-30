@@ -625,6 +625,18 @@ def load_config(
     configs = []
     raw_yaml_speakers: Optional[list[dict]] = None
 
+    # Resolve config path: explicit > ./config.yaml > $QOBUZPROXY_DATA_DIR/config.yaml
+    if config_path is None:
+        local = Path("./config.yaml")
+        if local.is_file():
+            config_path = local
+        else:
+            data_dir = os.environ.get("QOBUZPROXY_DATA_DIR")
+            if data_dir:
+                candidate = Path(data_dir) / "config.yaml"
+                if candidate.is_file():
+                    config_path = candidate
+
     # 1. Load from file (lowest priority of explicit configs)
     if config_path:
         file_config = load_yaml_config(config_path)

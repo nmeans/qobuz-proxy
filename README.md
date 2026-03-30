@@ -36,14 +36,13 @@ QobuzProxy can also play audio directly through your machine's speakers or DAC, 
 
 ```bash
 docker run -d --network host \
-  -e QOBUZ_EMAIL=your@email.com \
-  -e QOBUZ_PASSWORD=yourpassword \
+  -v ./data:/data \
   -e QOBUZPROXY_BACKEND=local \
   --device /dev/snd \
   ghcr.io/leolobato/qobuz-proxy:latest
 ```
 
-Note: The `--device /dev/snd` flag gives the container access to the host's audio devices (Linux only).
+Note: The `--device /dev/snd` flag gives the container access to the host's audio devices (Linux only). Qobuz credentials should be in your `data/config.yaml`.
 
 ## Installation
 
@@ -53,32 +52,87 @@ A pre-built Docker image is available from GitHub Container Registry:
 docker pull ghcr.io/leolobato/qobuz-proxy:latest
 ```
 
-### Quick Start
+### Quick Start (Docker, single speaker)
 
-1. Copy `.env.example` to `.env` and fill in your credentials:
-   ```bash
-   cp .env.example .env
-   nano .env  # Edit with your values
-   ```
+For a single DLNA speaker, you can use environment variables without a config file:
 
-2. Run with the pre-built image:
-   ```bash
-   docker run -d --network host --env-file .env ghcr.io/leolobato/qobuz-proxy:latest
-   ```
+```bash
+docker run -d --network host \
+  -e QOBUZ_EMAIL=your@email.com \
+  -e QOBUZ_PASSWORD=yourpassword \
+  -e QOBUZPROXY_DLNA_IP=192.168.1.50 \
+  -e QOBUZPROXY_DEVICE_NAME=Living\ Room \
+  -v ./data:/data \
+  ghcr.io/leolobato/qobuz-proxy:latest
+```
 
-   Or build and run locally with Docker Compose:
-   ```bash
-   docker-compose up -d
-   ```
+The `/data` volume is optional here but recommended to persist the credential cache across restarts.
 
-3. View logs:
-   ```bash
-   docker-compose logs -f
-   ```
+### Quick Start (Docker, multiple speakers)
+
+For multiple speakers, create a `config.yaml` in your data directory:
+
+```bash
+mkdir data
+cp config.yaml.example data/config.yaml
+nano data/config.yaml  # Edit with your values
+```
+
+Then run with Docker Compose:
+```bash
+docker-compose up -d
+```
+
+Or run directly:
+```bash
+docker run -d --network host -v ./data:/data ghcr.io/leolobato/qobuz-proxy:latest
+```
+
+View logs:
+```bash
+docker-compose logs -f
+```
+
+### Quick Start (without Docker)
+
+```bash
+pip install .
+cp config.yaml.example config.yaml  # Edit with your values
+qobuz-proxy
+```
+
+QobuzProxy looks for `config.yaml` in the current directory by default. Use `--config` to specify a different path.
+
+### Multi-Speaker Setup
+
+A single QobuzProxy instance can manage multiple speakers. Each speaker appears as a separate device in the Qobuz app. Use the `speakers` key in your config file:
+
+```yaml
+qobuz:
+  email: "user@example.com"
+  password: "password"
+
+speakers:
+  - name: "Living Room"
+    backend: dlna
+    dlna_ip: "192.168.1.50"
+    max_quality: auto
+
+  - name: "Office"
+    backend: dlna
+    dlna_ip: "192.168.1.51"
+    max_quality: 7
+
+  - name: "Headphones"
+    backend: local
+    audio_device: "Built-in Output"
+```
+
+Ports are auto-assigned unless explicitly set via `http_port` and `proxy_port`. See `config.yaml.example` for all available options.
 
 ### Network Requirements
 
-**Important**: QobuzProxy requires `network_mode: host` for mDNS discovery to work. This allows the Qobuz app to find the device on your local network.
+**Important**: QobuzProxy requires `network_mode: host` (Docker) or direct host access for mDNS discovery to work. This allows the Qobuz app to find the device on your local network.
 
 If you cannot use host networking, consider:
 - Using a macvlan network with a dedicated IP on your LAN
@@ -86,32 +140,24 @@ If you cannot use host networking, consider:
 
 ### Configuration
 
-Configuration can be provided via:
+The config file is found automatically in this order:
 
-1. **Environment variables** (recommended for Docker):
-   Set variables in `.env` file or directly in `docker-compose.yaml`
+1. `--config` CLI argument (if provided)
+2. `./config.yaml` (current directory)
+3. `$QOBUZPROXY_DATA_DIR/config.yaml` (set to `/data` in the Docker image)
 
-2. **Config file** (mounted volume):
-   ```yaml
-   volumes:
-     - ./config.yaml:/app/config.yaml:ro
-   ```
+Environment variables and CLI arguments override config file values. See `.env.example` for available environment variables.
 
-3. **Credentials cache** (optional, persists Qobuz app credentials):
-   ```yaml
-   volumes:
-     - /path/to/cache:/home/qobuzproxy/.qobuz-proxy
-   ```
-   This caches the Qobuz web player credentials so they don't need to be re-scraped on each restart. The container runs as user `qobuzproxy`, so the path is `/home/qobuzproxy/.qobuz-proxy` (not `/root/.qobuz-proxy`).
+### Data Directory
 
-### Ports
+In Docker, both the config file and credential cache live under `/data`:
 
-| Port | Purpose |
-|------|---------|
-| 8689 | HTTP server for mDNS discovery |
-| 7120 | Audio proxy for DLNA streaming |
+```yaml
+volumes:
+  - ./data:/data
+```
 
-With `network_mode: host`, these ports are exposed directly on the host.
+The credential cache stores Qobuz web player credentials so they don't need to be re-scraped on each restart. Outside Docker, the cache defaults to `~/.qobuz-proxy/`.
 
 ### Health Check
 

@@ -9,6 +9,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -21,7 +22,7 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 # Cache location
-CACHE_DIR = Path.home() / ".qobuz-proxy"
+CACHE_DIR = Path(os.environ.get("QOBUZPROXY_DATA_DIR", Path.home() / ".qobuz-proxy"))
 CACHE_FILE = CACHE_DIR / "credentials.json"
 
 

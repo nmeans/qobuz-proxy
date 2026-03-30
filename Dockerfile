@@ -28,8 +28,14 @@ COPY protos/ ./protos/
 # Install package
 RUN pip install --no-cache-dir .
 
+# Create data directory and set ownership
+RUN mkdir -p /data && chown qobuzproxy:qobuzproxy /data
+
 # Switch to non-root user
 USER qobuzproxy
+
+# Credential cache and config live under /data
+ENV QOBUZPROXY_DATA_DIR=/data
 
 # Expose ports (documentation only - host networking bypasses this)
 # 8689: HTTP server for mDNS discovery endpoints

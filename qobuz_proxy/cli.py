@@ -108,9 +108,9 @@ Environment Variables:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("./config.yaml"),
+        default=None,
         metavar="PATH",
-        help="Path to config file (default: ./config.yaml)",
+        help="Path to config file (default: ./config.yaml or $QOBUZPROXY_DATA_DIR/config.yaml)",
     )
 
     # Authentication
