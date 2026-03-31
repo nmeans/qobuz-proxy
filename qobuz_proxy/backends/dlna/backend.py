@@ -96,6 +96,9 @@ class DLNABackend(AudioBackend):
         self._gapless_supported: bool = True
         self._current_proxy_url: Optional[str] = None
 
+        # Sonos queue-based playback (for Sonos app metadata display)
+        self._is_sonos: bool = False
+
     # =========================================================================
     # Lifecycle
     # =========================================================================
@@ -122,6 +125,11 @@ class DLNABackend(AudioBackend):
             # Update name from device
             if device_info.friendly_name:
                 self.name = device_info.friendly_name
+
+            # Detect Sonos devices for queue-based playback
+            self._is_sonos = "sonos" in (device_info.manufacturer or "").lower()
+            if self._is_sonos:
+                logger.info("Sonos device detected — using queue-based playback")
 
             # Query device capabilities
             await self._discover_capabilities(device_info)
@@ -228,18 +236,47 @@ class DLNABackend(AudioBackend):
         # Build DIDL-Lite metadata
         didl = self._build_didl(actual_url, metadata, content_type)
 
-        # Set URI and start playback
-        if await self._client.set_av_transport_uri(actual_url, didl):
+        # Start playback — Sonos uses queue for proper app metadata display
+        if self._is_sonos:
+            success = await self._play_via_queue(actual_url, didl)
+        else:
+            success = await self._play_via_transport(actual_url, didl)
+
+        if success:
+            self._position_ms = 0
+            self._current_proxy_url = actual_url
+            self._playback_started_at = time.monotonic()
+            self._notify_state_change(PlaybackState.PLAYING)
+            logger.info(f"Playing: {metadata.artist} - {metadata.title}")
+
+    async def _play_via_transport(self, url: str, didl: str) -> bool:
+        """Start playback using SetAVTransportURI (standard DLNA)."""
+        assert self._client
+        if await self._client.set_av_transport_uri(url, didl):
             if await self._client.play():
-                self._position_ms = 0
-                self._current_proxy_url = actual_url
-                self._playback_started_at = time.monotonic()
-                self._notify_state_change(PlaybackState.PLAYING)
-                logger.info(f"Playing: {metadata.artist} - {metadata.title}")
+                return True
             else:
                 self._notify_playback_error("Failed to start playback")
         else:
             self._notify_playback_error("Failed to set transport URI")
+        return False
+
+    async def _play_via_queue(self, url: str, didl: str) -> bool:
+        """Start playback using Sonos queue (shows metadata in Sonos app)."""
+        assert self._client
+        if not await self._client.clear_queue():
+            logger.warning("Failed to clear queue, falling back to transport URI")
+            return await self._play_via_transport(url, didl)
+
+        if not await self._client.add_uri_to_queue(url, didl):
+            logger.warning("Failed to add to queue, falling back to transport URI")
+            return await self._play_via_transport(url, didl)
+
+        if await self._client.play_from_queue(0):
+            return True
+
+        self._notify_playback_error("Failed to play from queue")
+        return False
 
     async def pause(self) -> None:
         """Pause playback."""
@@ -413,7 +450,16 @@ class DLNABackend(AudioBackend):
         # Build DIDL-Lite metadata
         didl = self._build_didl(actual_url, metadata, content_type)
 
-        # Send to device
+        # Send to device — Sonos uses queue, others use SetNextAVTransportURI
+        if self._is_sonos:
+            if await self._client.add_uri_to_queue(actual_url, didl):
+                self._next_track_proxy_url = actual_url
+                self._next_track_metadata = metadata
+                logger.info(f"Gapless: armed next track: {metadata.artist} - {metadata.title}")
+                return True
+            logger.warning("Gapless: failed to add next track to queue")
+            return False
+
         result: SoapResult = await self._client.set_next_av_transport_uri(actual_url, didl)
 
         if result.success:
@@ -468,7 +514,12 @@ class DLNABackend(AudioBackend):
                     and self._next_track_proxy_url
                     and self._client
                 ):
-                    current_uri = await self._client.get_media_info()
+                    # For Sonos queue playback, GetMediaInfo.CurrentURI returns the
+                    # queue URI, not the track URL. Use GetPositionInfo.TrackURI instead.
+                    if self._is_sonos:
+                        current_uri = await self._client.get_track_uri()
+                    else:
+                        current_uri = await self._client.get_media_info()
                     if current_uri and current_uri == self._next_track_proxy_url:
                         logger.info("Gapless: transition detected — device moved to next track")
                         # Update state to reflect the new track
@@ -546,6 +597,15 @@ class DLNABackend(AudioBackend):
         else:
             protocol_info = f"http-get:*:{content_type}:*"
 
+        # Format duration as H:MM:SS for the res element
+        duration_attr = ""
+        if metadata.duration_ms > 0:
+            total_s = metadata.duration_ms // 1000
+            h = total_s // 3600
+            m = (total_s % 3600) // 60
+            s = total_s % 60
+            duration_attr = f' duration="{h}:{m:02d}:{s:02d}"'
+
         didl = f"""<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"
                    xmlns:dc="http://purl.org/dc/elements/1.1/"
                    xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
@@ -560,7 +620,7 @@ class DLNABackend(AudioBackend):
             didl += f"\n        <upnp:albumArtURI>{escape(metadata.artwork_url)}</upnp:albumArtURI>"
 
         didl += f"""
-        <res protocolInfo="{escape(protocol_info)}">{escape(url)}</res>
+        <res protocolInfo="{escape(protocol_info)}"{duration_attr}>{escape(url)}</res>
     </item>
 </DIDL-Lite>"""
 
