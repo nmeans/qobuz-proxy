@@ -13,7 +13,7 @@ def _make_local_config() -> Config:
     """Create a config with local backend."""
     config = Config()
     config.qobuz.email = "test@example.com"
-    config.qobuz.password = "testpass"
+    config.qobuz.auth_token = "testpass"
     config.backend.type = "local"
     config.backend.local.device = "default"
     config.backend.local.buffer_size = 2048

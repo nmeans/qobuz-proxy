@@ -41,7 +41,9 @@ VALID_LOG_LEVELS = {"debug", "info", "warning", "error"}
 ENV_MAPPINGS = {
     # Qobuz
     "QOBUZ_EMAIL": ("qobuz", "email"),
-    "QOBUZ_PASSWORD": ("qobuz", "password"),
+    "QOBUZ_AUTH_TOKEN": ("qobuz", "auth_token"),
+    "QOBUZ_USER_ID": ("qobuz", "user_id"),
+    "QOBUZ_PASSWORD": ("qobuz", "auth_token"),  # Deprecated alias
     "QOBUZ_MAX_QUALITY": ("qobuz", "max_quality"),
     # Device
     "QOBUZPROXY_DEVICE_NAME": ("device", "name"),
@@ -73,7 +75,8 @@ class QobuzConfig:
     """Qobuz account configuration."""
 
     email: str = ""
-    password: str = ""
+    auth_token: str = ""
+    user_id: str = ""
     max_quality: int = 27  # 5=MP3, 6=CD, 7=Hi-Res 96k, 27=Hi-Res 192k
 
 
@@ -181,14 +184,9 @@ def validate_config(config: Config) -> None:
     """
     errors = []
 
-    # Qobuz credentials
-    if not config.qobuz.email:
-        errors.append("Qobuz email is required")
-    elif not validate_email(config.qobuz.email):
+    # Qobuz credentials (optional — token-based auth may provide them later)
+    if config.qobuz.email and not validate_email(config.qobuz.email):
         errors.append(f"Invalid email format: {config.qobuz.email}")
-
-    if not config.qobuz.password:
-        errors.append("Qobuz password is required")
 
     if config.qobuz.max_quality not in VALID_QUALITIES:
         errors.append(
@@ -551,7 +549,17 @@ def dict_to_config(d: dict) -> Config:
     if "qobuz" in d:
         q = d["qobuz"]
         config.qobuz.email = q.get("email", config.qobuz.email)
-        config.qobuz.password = q.get("password", config.qobuz.password)
+        config.qobuz.auth_token = q.get("auth_token", config.qobuz.auth_token)
+        config.qobuz.user_id = q.get("user_id", config.qobuz.user_id)
+
+        # Accept "password" as deprecated alias for "auth_token"
+        if "password" in q and "auth_token" not in q:
+            logger.warning(
+                "Config key 'password' is deprecated and will be removed "
+                "in a future release. Use 'auth_token' instead."
+            )
+            config.qobuz.auth_token = q["password"]
+
         max_quality = q.get("max_quality", config.qobuz.max_quality)
         # Handle "auto" string from YAML
         if isinstance(max_quality, str) and max_quality.lower() == "auto":

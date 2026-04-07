@@ -70,7 +70,7 @@ class QobuzProxy:
         logger.info(f"Authenticating as {self._config.qobuz.email}...")
         if not await self._api_client.login(
             email=self._config.qobuz.email,
-            password=self._config.qobuz.password,
+            password=self._config.qobuz.auth_token,
         ):
             raise AuthenticationError("Qobuz login failed - check credentials")
         logger.info("Authentication successful")

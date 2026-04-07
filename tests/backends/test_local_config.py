@@ -80,7 +80,7 @@ class TestValidationLocal:
     def _make_valid_local_config(self) -> Config:
         config = Config()
         config.qobuz.email = "test@example.com"
-        config.qobuz.password = "testpass"
+        config.qobuz.auth_token = "testpass"
         config.backend.type = "local"
         return config
 

@@ -33,7 +33,7 @@ def _make_speaker_config(
 def _make_config(*speaker_configs: SpeakerConfig) -> Config:
     """Return a Config with the given speakers and minimal Qobuz credentials."""
     config = Config()
-    config.qobuz = QobuzConfig(email="test@example.com", password="secret")
+    config.qobuz = QobuzConfig(email="test@example.com", auth_token="secret")
     config.speakers = list(speaker_configs)
     return config
 

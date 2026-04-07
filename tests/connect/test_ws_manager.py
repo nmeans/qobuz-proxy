@@ -21,7 +21,7 @@ def config() -> Config:
     """Create a test configuration."""
     cfg = Config()
     cfg.qobuz.email = "test@test.com"
-    cfg.qobuz.password = "test_password"
+    cfg.qobuz.auth_token = "test_password"
     cfg.device.name = "Test Device"
     cfg.device.uuid = str(uuid.uuid4())
     cfg.backend.dlna.ip = "192.168.1.100"
