@@ -54,7 +54,7 @@ class TestAppLocalBackend:
             patch(_SD_PATCH, return_value=_mock_sounddevice()),
         ):
             mock_api = mock_api_class.return_value
-            mock_api.login = AsyncMock(return_value=True)
+            mock_api.login_with_token = AsyncMock(return_value=True)
 
             # Start will create backend and continue... we need to stop it
             # after backend creation. We'll patch DiscoveryService to raise
@@ -84,7 +84,7 @@ class TestAppLocalBackend:
             patch(_SD_PATCH, return_value=_mock_sounddevice()),
         ):
             mock_api = mock_api_class.return_value
-            mock_api.login = AsyncMock(return_value=True)
+            mock_api.login_with_token = AsyncMock(return_value=True)
 
             with patch("qobuz_proxy.app.DiscoveryService") as mock_disc:
                 mock_disc.return_value.start = AsyncMock(side_effect=Exception("stop here"))
@@ -112,7 +112,7 @@ class TestAppLocalBackend:
             patch(_SD_PATCH, return_value=_mock_sounddevice()),
         ):
             mock_api = mock_api_class.return_value
-            mock_api.login = AsyncMock(return_value=True)
+            mock_api.login_with_token = AsyncMock(return_value=True)
 
             with patch("qobuz_proxy.app.DiscoveryService") as mock_disc:
                 mock_disc.return_value.start = AsyncMock(side_effect=Exception("stop here"))
@@ -141,7 +141,7 @@ class TestAppLocalBackend:
             patch("qobuz_proxy.app.QobuzPlayer") as mock_player_class,
         ):
             mock_api = mock_api_class.return_value
-            mock_api.login = AsyncMock(return_value=True)
+            mock_api.login_with_token = AsyncMock(return_value=True)
 
             mock_player = mock_player_class.return_value
 

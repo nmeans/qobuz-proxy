@@ -67,10 +67,10 @@ class QobuzProxy:
 
         # 2. Create shared API client and authenticate
         self._api_client = QobuzAPIClient(self._app_id, self._app_secret)
-        logger.info(f"Authenticating as {self._config.qobuz.email}...")
-        if not await self._api_client.login(
-            email=self._config.qobuz.email,
-            password=self._config.qobuz.auth_token,
+        logger.info(f"Authenticating as user {self._config.qobuz.user_id}...")
+        if not await self._api_client.login_with_token(
+            user_id=self._config.qobuz.user_id,
+            auth_token=self._config.qobuz.auth_token,
         ):
             raise AuthenticationError("Qobuz login failed - check credentials")
         logger.info("Authentication successful")

@@ -59,7 +59,7 @@ class TestMultiSpeakerOrchestration:
             patch("qobuz_proxy.app.QobuzAPIClient") as MockAPIClient,
             patch("qobuz_proxy.app.Speaker", side_effect=mock_speaker_instances) as MockSpeaker,
         ):
-            MockAPIClient.return_value.login = AsyncMock(return_value=True)
+            MockAPIClient.return_value.login_with_token = AsyncMock(return_value=True)
 
             app = QobuzProxy(config)
             await app.start()
@@ -93,7 +93,7 @@ class TestMultiSpeakerOrchestration:
             patch("qobuz_proxy.app.QobuzAPIClient") as MockAPIClient,
             patch("qobuz_proxy.app.Speaker", side_effect=[good, bad]),
         ):
-            MockAPIClient.return_value.login = AsyncMock(return_value=True)
+            MockAPIClient.return_value.login_with_token = AsyncMock(return_value=True)
 
             app = QobuzProxy(config)
             await app.start()
@@ -120,7 +120,7 @@ class TestMultiSpeakerOrchestration:
             patch("qobuz_proxy.app.QobuzAPIClient") as MockAPIClient,
             patch("qobuz_proxy.app.Speaker", side_effect=[bad]),
         ):
-            MockAPIClient.return_value.login = AsyncMock(return_value=True)
+            MockAPIClient.return_value.login_with_token = AsyncMock(return_value=True)
 
             app = QobuzProxy(config)
             with pytest.raises(RuntimeError, match="No speakers started"):
@@ -150,7 +150,7 @@ class TestMultiSpeakerOrchestration:
             patch("qobuz_proxy.app.QobuzAPIClient") as MockAPIClient,
             patch("qobuz_proxy.app.Speaker", side_effect=mock_instances),
         ):
-            MockAPIClient.return_value.login = AsyncMock(return_value=True)
+            MockAPIClient.return_value.login_with_token = AsyncMock(return_value=True)
 
             app = QobuzProxy(config)
             await app.start()
