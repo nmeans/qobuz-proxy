@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QobuzProxy</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>QobuzProxy</h1>
+
+        <!-- Auth State: Not authenticated -->
+        <div id="auth-disconnected" class="card card-error">
+            <div class="card-header">
+                <span class="status-dot status-error"></span>
+                <span>Not connected</span>
+            </div>
+            <p>You need to log in to your Qobuz account to use QobuzProxy.</p>
+            <button onclick="startLogin()">Log in to Qobuz</button>
+        </div>
+
+        <!-- Auth State: Login flow -->
+        <div id="auth-login" class="card card-info" style="display: none;">
+            <div class="card-header">
+                <span class="status-dot status-info"></span>
+                <span>Log in to Qobuz</span>
+            </div>
+            <ol class="instructions">
+                <li>Log in at <a href="https://play.qobuz.com/login" target="_blank" rel="noopener">play.qobuz.com</a></li>
+                <li>Open DevTools (F12 or Cmd+Option+I)</li>
+                <li>Go to <strong>Application</strong> &rarr; <strong>Local Storage</strong> &rarr; <code>https://play.qobuz.com</code></li>
+                <li>Copy the <code>user_id</code> and <code>user_auth_token</code> values</li>
+            </ol>
+            <form onsubmit="submitToken(event)">
+                <div class="form-group">
+                    <label for="user-id">User ID</label>
+                    <input type="text" id="user-id" name="user_id" required placeholder="e.g. 12345678">
+                </div>
+                <div class="form-group">
+                    <label for="auth-token">Auth Token</label>
+                    <input type="text" id="auth-token" name="user_auth_token" required placeholder="Paste token here">
+                </div>
+                <div id="login-error" class="error-message" style="display: none;"></div>
+                <div class="button-group">
+                    <button type="submit">Save &amp; Connect</button>
+                    <button type="button" class="button-secondary" onclick="cancelLogin()">Cancel</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Auth State: Authenticated -->
+        <div id="auth-connected" class="card card-success" style="display: none;">
+            <div class="card-header">
+                <span class="status-dot status-success"></span>
+                <span>Connected</span>
+            </div>
+            <p>Logged in as <strong id="auth-email"></strong></p>
+            <button class="button-danger" onclick="logout()">Logout</button>
+        </div>
+
+        <!-- Speakers Section -->
+        <div class="card">
+            <h2>Speakers</h2>
+            <div id="speakers-list">
+                <p class="muted">Waiting for authentication...</p>
+            </div>
+        </div>
+
+        <!-- System Section -->
+        <div class="card">
+            <h2>System</h2>
+            <div class="system-info">
+                <div class="info-row">
+                    <span class="info-label">Version</span>
+                    <span id="system-version">--</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Uptime</span>
+                    <span id="system-uptime">--</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
