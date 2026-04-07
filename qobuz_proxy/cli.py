@@ -15,7 +15,6 @@ from typing import Any
 from qobuz_proxy import __version__
 from qobuz_proxy.config import Config, ConfigError, load_config, AUTO_QUALITY
 from qobuz_proxy.app import QobuzProxy
-from qobuz_proxy.auth import AuthenticationError
 from qobuz_proxy.backends import BackendNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -62,10 +61,10 @@ Examples:
   qobuz-proxy --discover
   qobuz-proxy --discover --timeout 10 --json
   qobuz-proxy --config config.yaml
-  qobuz-proxy --email user@example.com --password secret --dlna-ip 192.168.1.50
+  qobuz-proxy --email user@example.com --auth-token TOKEN --user-id ID --dlna-ip 192.168.1.50
 
 Environment Variables:
-  QOBUZ_EMAIL, QOBUZ_PASSWORD, QOBUZ_MAX_QUALITY
+  QOBUZ_EMAIL, QOBUZ_AUTH_TOKEN, QOBUZ_USER_ID, QOBUZ_MAX_QUALITY
   QOBUZPROXY_DEVICE_NAME, QOBUZPROXY_DLNA_IP, QOBUZPROXY_DLNA_PORT
   QOBUZPROXY_HTTP_PORT, QOBUZPROXY_PROXY_PORT, QOBUZPROXY_LOG_LEVEL
 """,
@@ -121,9 +120,19 @@ Environment Variables:
         help="Qobuz account email",
     )
     auth_group.add_argument(
+        "--auth-token",
+        metavar="TOKEN",
+        help="Qobuz auth token (from browser login)",
+    )
+    auth_group.add_argument(
+        "--user-id",
+        metavar="ID",
+        help="Qobuz user ID (from browser login)",
+    )
+    auth_group.add_argument(
         "--password",
         metavar="TEXT",
-        help="Qobuz account password",
+        help=argparse.SUPPRESS,
     )
     auth_group.add_argument(
         "--max-quality",
@@ -231,7 +240,9 @@ def args_to_dict(args: argparse.Namespace) -> dict:
     # Map CLI args to config paths
     mappings = {
         "email": ("qobuz", "email"),
-        "password": ("qobuz", "password"),
+        "auth_token": ("qobuz", "auth_token"),
+        "user_id": ("qobuz", "user_id"),
+        "password": ("qobuz", "auth_token"),  # Deprecated alias
         "max_quality": ("qobuz", "max_quality"),
         "name": ("device", "name"),
         "uuid": ("device", "uuid"),
@@ -402,10 +413,6 @@ def run_serve(args: argparse.Namespace) -> int:
         app = QobuzProxy(config)
         asyncio.run(app.run())
         return EXIT_SUCCESS
-
-    except AuthenticationError as e:
-        logger.error(f"Authentication failed: {e}")
-        return EXIT_AUTH_ERROR
 
     except BackendNotFoundError as e:
         logger.error(f"Backend error: {e}")
