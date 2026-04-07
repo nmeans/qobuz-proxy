@@ -1,8 +1,6 @@
-"""Tests for multi-speaker orchestration in QobuzProxy."""
+"""Tests for multi-speaker orchestration and auth lifecycle in QobuzProxy."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from qobuz_proxy.app import QobuzProxy
 from qobuz_proxy.config import Config, QobuzConfig, SpeakerConfig
@@ -31,16 +29,16 @@ def _make_speaker_config(
 
 
 def _make_config(*speaker_configs: SpeakerConfig) -> Config:
-    """Return a Config with the given speakers and minimal Qobuz credentials."""
+    """Return a Config with the given speakers and auth credentials."""
     config = Config()
-    config.qobuz = QobuzConfig(email="test@example.com", auth_token="secret")
+    config.qobuz = QobuzConfig(email="test@example.com", auth_token="secret", user_id="12345")
     config.speakers = list(speaker_configs)
     return config
 
 
 class TestMultiSpeakerOrchestration:
     async def test_starts_multiple_speakers(self):
-        """Two speakers → both constructors called, both start() called, app is running."""
+        """Two speakers constructed, both start() called, app is running."""
         sc1 = _make_speaker_config("Living Room", http_port=8689)
         sc2 = _make_speaker_config("Bedroom", http_port=8690)
         config = _make_config(sc1, sc2)
@@ -52,6 +50,8 @@ class TestMultiSpeakerOrchestration:
             m.name = "mock"
 
         with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
             patch(
                 "qobuz_proxy.app.auto_fetch_credentials",
                 new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
@@ -70,7 +70,7 @@ class TestMultiSpeakerOrchestration:
             assert app.is_running
 
     async def test_continues_when_one_speaker_fails(self):
-        """One speaker succeeds, one returns False → app still running with one speaker."""
+        """One speaker succeeds, one returns False -> app still running with one speaker."""
         sc1 = _make_speaker_config("Living Room", http_port=8689)
         sc2 = _make_speaker_config("Bedroom", http_port=8690)
         config = _make_config(sc1, sc2)
@@ -86,6 +86,8 @@ class TestMultiSpeakerOrchestration:
         bad.name = "Bedroom"
 
         with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
             patch(
                 "qobuz_proxy.app.auto_fetch_credentials",
                 new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
@@ -102,8 +104,8 @@ class TestMultiSpeakerOrchestration:
             assert len(app._speakers) == 1
             assert app._speakers[0] is good
 
-    async def test_fails_when_all_speakers_fail(self):
-        """All speakers return False → RuntimeError raised."""
+    async def test_no_speakers_started_still_running(self):
+        """All speakers fail -> app stays running (waiting for auth or retry)."""
         sc1 = _make_speaker_config("Living Room", http_port=8689)
         config = _make_config(sc1)
 
@@ -113,6 +115,8 @@ class TestMultiSpeakerOrchestration:
         bad.name = "Living Room"
 
         with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
             patch(
                 "qobuz_proxy.app.auto_fetch_credentials",
                 new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
@@ -123,10 +127,11 @@ class TestMultiSpeakerOrchestration:
             MockAPIClient.return_value.login_with_token = AsyncMock(return_value=True)
 
             app = QobuzProxy(config)
-            with pytest.raises(RuntimeError, match="No speakers started"):
-                await app.start()
+            await app.start()
 
-            assert not app.is_running
+            # App stays running even if speakers failed (no RuntimeError)
+            assert app.is_running
+            assert len(app._speakers) == 0
 
     async def test_stop_stops_all_speakers(self):
         """After a successful start, stop() calls stop() on all started speakers."""
@@ -143,6 +148,8 @@ class TestMultiSpeakerOrchestration:
             mock_instances.append(m)
 
         with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
             patch(
                 "qobuz_proxy.app.auto_fetch_credentials",
                 new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
@@ -159,3 +166,226 @@ class TestMultiSpeakerOrchestration:
             for instance in mock_instances:
                 instance.stop.assert_called_once()
             assert not app.is_running
+
+
+class TestGracefulStartup:
+    """Tests for the new graceful startup behavior."""
+
+    async def test_starts_without_credentials(self):
+        """App starts in waiting-for-auth state when no credentials in config or cache."""
+        config = Config()  # No qobuz credentials
+        config.speakers = [_make_speaker_config()]
+
+        with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
+            patch(
+                "qobuz_proxy.app.auto_fetch_credentials",
+                new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
+            ),
+            patch("qobuz_proxy.app.load_user_token", return_value=None),
+        ):
+            app = QobuzProxy(config)
+            await app.start()
+
+            assert app.is_running
+            assert app._auth_state["authenticated"] is False
+            assert len(app._speakers) == 0
+
+    async def test_starts_with_cached_token(self):
+        """App picks up cached token and authenticates automatically."""
+        config = Config()  # No config credentials
+        config.speakers = [_make_speaker_config()]
+
+        mock_speaker = MagicMock()
+        mock_speaker.start = AsyncMock(return_value=True)
+        mock_speaker.stop = AsyncMock()
+        mock_speaker.name = "mock"
+
+        with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
+            patch(
+                "qobuz_proxy.app.auto_fetch_credentials",
+                new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
+            ),
+            patch(
+                "qobuz_proxy.app.load_user_token",
+                return_value={
+                    "user_id": "99",
+                    "user_auth_token": "cached_tok",
+                    "email": "cached@example.com",
+                },
+            ),
+            patch("qobuz_proxy.app.QobuzAPIClient") as MockAPIClient,
+            patch("qobuz_proxy.app.Speaker", return_value=mock_speaker),
+        ):
+            MockAPIClient.return_value.login_with_token = AsyncMock(return_value=True)
+
+            app = QobuzProxy(config)
+            await app.start()
+
+            assert app._auth_state["authenticated"] is True
+            assert app._auth_state["user_id"] == "99"
+            assert len(app._speakers) == 1
+
+    async def test_config_token_takes_priority_over_cache(self):
+        """Config credentials are used even if cache exists."""
+        config = _make_config(_make_speaker_config())
+
+        mock_speaker = MagicMock()
+        mock_speaker.start = AsyncMock(return_value=True)
+        mock_speaker.stop = AsyncMock()
+        mock_speaker.name = "mock"
+
+        with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
+            patch(
+                "qobuz_proxy.app.auto_fetch_credentials",
+                new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
+            ),
+            patch("qobuz_proxy.app.load_user_token") as mock_load_cache,
+            patch("qobuz_proxy.app.QobuzAPIClient") as MockAPIClient,
+            patch("qobuz_proxy.app.Speaker", return_value=mock_speaker),
+        ):
+            MockAPIClient.return_value.login_with_token = AsyncMock(return_value=True)
+
+            app = QobuzProxy(config)
+            await app.start()
+
+            # Cache should not have been consulted
+            mock_load_cache.assert_not_called()
+            assert app._auth_state["authenticated"] is True
+            assert app._auth_state["user_id"] == "12345"
+
+    async def test_invalid_cached_token_enters_waiting(self):
+        """When cached token is invalid, app enters waiting-for-auth state."""
+        config = Config()
+        config.speakers = [_make_speaker_config()]
+
+        with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
+            patch(
+                "qobuz_proxy.app.auto_fetch_credentials",
+                new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
+            ),
+            patch(
+                "qobuz_proxy.app.load_user_token",
+                return_value={
+                    "user_id": "99",
+                    "user_auth_token": "bad_tok",
+                    "email": "",
+                },
+            ),
+            patch("qobuz_proxy.app.QobuzAPIClient") as MockAPIClient,
+        ):
+            MockAPIClient.return_value.login_with_token = AsyncMock(return_value=False)
+
+            app = QobuzProxy(config)
+            await app.start()
+
+            assert app.is_running
+            assert app._auth_state["authenticated"] is False
+            assert len(app._speakers) == 0
+
+
+class TestWebUICallbacks:
+    """Tests for auth token submission and logout callbacks."""
+
+    async def test_on_auth_token_success(self):
+        """Successful token submission authenticates and starts speakers."""
+        config = Config()
+        config.speakers = [_make_speaker_config()]
+
+        mock_speaker = MagicMock()
+        mock_speaker.start = AsyncMock(return_value=True)
+        mock_speaker.stop = AsyncMock()
+        mock_speaker.name = "mock"
+
+        with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
+            patch(
+                "qobuz_proxy.app.auto_fetch_credentials",
+                new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
+            ),
+            patch("qobuz_proxy.app.load_user_token", return_value=None),
+            patch("qobuz_proxy.app.QobuzAPIClient") as MockAPIClient,
+            patch("qobuz_proxy.app.Speaker", return_value=mock_speaker),
+            patch("qobuz_proxy.app.save_user_token", return_value=True),
+        ):
+            MockAPIClient.return_value.login_with_token = AsyncMock(return_value=True)
+
+            app = QobuzProxy(config)
+            await app.start()
+            assert not app._auth_state["authenticated"]
+
+            result = await app._on_auth_token("42", "valid_token")
+
+            assert result is True
+            assert app._auth_state["authenticated"] is True
+            assert app._auth_state["user_id"] == "42"
+            assert len(app._speakers) == 1
+
+    async def test_on_auth_token_failure(self):
+        """Failed token submission returns False and stays unauthenticated."""
+        config = Config()
+        config.speakers = [_make_speaker_config()]
+
+        with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
+            patch(
+                "qobuz_proxy.app.auto_fetch_credentials",
+                new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
+            ),
+            patch("qobuz_proxy.app.load_user_token", return_value=None),
+            patch("qobuz_proxy.app.QobuzAPIClient") as MockAPIClient,
+        ):
+            MockAPIClient.return_value.login_with_token = AsyncMock(return_value=False)
+
+            app = QobuzProxy(config)
+            await app.start()
+
+            result = await app._on_auth_token("42", "bad_token")
+
+            assert result is False
+            assert app._auth_state["authenticated"] is False
+            assert len(app._speakers) == 0
+
+    async def test_on_logout_stops_speakers_and_clears_state(self):
+        """Logout stops speakers and resets auth state."""
+        config = _make_config(_make_speaker_config())
+
+        mock_speaker = MagicMock()
+        mock_speaker.start = AsyncMock(return_value=True)
+        mock_speaker.stop = AsyncMock()
+        mock_speaker.name = "mock"
+
+        with (
+            patch.object(QobuzProxy, "_start_web_server", new_callable=AsyncMock),
+            patch.object(QobuzProxy, "_stop_web_server", new_callable=AsyncMock),
+            patch(
+                "qobuz_proxy.app.auto_fetch_credentials",
+                new=AsyncMock(return_value={"app_id": "id", "app_secret": "secret"}),
+            ),
+            patch("qobuz_proxy.app.QobuzAPIClient") as MockAPIClient,
+            patch("qobuz_proxy.app.Speaker", return_value=mock_speaker),
+            patch("qobuz_proxy.app.clear_user_token") as mock_clear,
+        ):
+            MockAPIClient.return_value.login_with_token = AsyncMock(return_value=True)
+
+            app = QobuzProxy(config)
+            await app.start()
+            assert app._auth_state["authenticated"] is True
+            assert len(app._speakers) == 1
+
+            await app._on_logout()
+
+            assert app._auth_state["authenticated"] is False
+            assert app._auth_state["user_id"] == ""
+            assert len(app._speakers) == 0
+            mock_speaker.stop.assert_called_once()
+            mock_clear.assert_called_once()

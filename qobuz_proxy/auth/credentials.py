@@ -260,6 +260,24 @@ def save_user_token(user_id: str, auth_token: str, email: str) -> bool:
         return False
 
 
+def clear_user_token() -> bool:
+    """Remove user auth token from cache file, preserving app credentials."""
+    try:
+        if not CACHE_FILE.exists():
+            return True
+        with open(CACHE_FILE) as f:
+            existing: dict[str, str] = json.load(f)
+        for key in ("user_id", "user_auth_token", "email"):
+            existing.pop(key, None)
+        with open(CACHE_FILE, "w") as f:
+            json.dump(existing, f, indent=2)
+        logger.info("Cleared user token from cache")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to clear user token: {e}")
+        return False
+
+
 async def test_secret(app_id: str, app_secret: str) -> bool:
     """Test if app_id/app_secret pair works."""
     test_track_id = "64868955"
