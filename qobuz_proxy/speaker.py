@@ -10,6 +10,8 @@ import asyncio
 import logging
 from typing import Optional
 
+from aiohttp import web
+
 from qobuz_proxy.config import (
     AUTO_FALLBACK_QUALITY,
     AUTO_QUALITY,
@@ -50,7 +52,13 @@ class Speaker:
     one Qobuz Connect device.
     """
 
-    def __init__(self, config: SpeakerConfig, api_client: QobuzAPIClient, app_id: str) -> None:
+    def __init__(
+        self,
+        config: SpeakerConfig,
+        api_client: QobuzAPIClient,
+        app_id: str,
+        web_app: Optional[web.Application] = None,
+    ) -> None:
         """
         Initialize Speaker.
 
@@ -58,10 +66,12 @@ class Speaker:
             config: Per-speaker configuration
             api_client: Authenticated Qobuz API client (shared across speakers)
             app_id: Qobuz application ID (shared across speakers)
+            web_app: Optional shared aiohttp Application for discovery routes
         """
         self._config = config
         self._api_client = api_client
         self._app_id = app_id
+        self._web_app = web_app
 
         self._is_running: bool = False
         self._ws_connected_event: asyncio.Event = asyncio.Event()
@@ -220,6 +230,7 @@ class Speaker:
                 app_id=self._app_id,
                 on_connect=self._on_app_connected,
                 quality_getter=self._get_effective_quality,
+                web_app=self._web_app,
             )
             await self._discovery.start()
             logger.info(f"[{self.name}] Discovery service started on port {self._config.http_port}")

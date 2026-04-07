@@ -74,6 +74,7 @@ class DiscoveryService:
         app_id: str,
         on_connect: Optional[Callable[[ConnectTokens], None]] = None,
         quality_getter: Optional[QualityGetter] = None,
+        web_app: Optional[web.Application] = None,
     ):
         """
         Initialize discovery service.
@@ -83,6 +84,8 @@ class DiscoveryService:
             app_id: Qobuz app ID (from credential scraper)
             on_connect: Callback when app connects with tokens
             quality_getter: Callback to get current max quality setting
+            web_app: Optional shared aiohttp Application. When provided,
+                routes are registered on it but server lifecycle is not managed.
         """
         self.config = config
         self.app_id = app_id
@@ -90,7 +93,12 @@ class DiscoveryService:
         self._quality_getter = quality_getter
 
         # HTTP server components
-        self._app: Optional[web.Application] = None
+        if web_app is not None:
+            self._app: Optional[web.Application] = web_app
+            self._owns_server = False
+        else:
+            self._app = None
+            self._owns_server = True
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
 
@@ -124,28 +132,33 @@ class DiscoveryService:
 
     async def _start_http_server(self) -> None:
         """Start aiohttp server with discovery endpoints."""
-        self._app = web.Application()
-        self._app.router.add_get("/", self._handle_root)
+        if self._owns_server:
+            self._app = web.Application()
+            self._app.router.add_get("/", self._handle_root)
+
+        assert self._app is not None
         self._app.router.add_get("/streamcore/get-display-info", self._handle_display_info)
         self._app.router.add_get("/streamcore/get-connect-info", self._handle_connect_info)
         self._app.router.add_post("/streamcore/connect-to-qconnect", self._handle_connect)
 
-        self._runner = web.AppRunner(self._app)
-        await self._runner.setup()
+        if self._owns_server:
+            self._runner = web.AppRunner(self._app)
+            await self._runner.setup()
 
-        self._site = web.TCPSite(
-            self._runner,
-            self.config.server.bind_address,
-            self.config.server.http_port,
-        )
-        await self._site.start()
+            self._site = web.TCPSite(
+                self._runner,
+                self.config.server.bind_address,
+                self.config.server.http_port,
+            )
+            await self._site.start()
 
     async def _stop_http_server(self) -> None:
-        """Stop aiohttp server."""
-        if self._site:
-            await self._site.stop()
-        if self._runner:
-            await self._runner.cleanup()
+        """Stop aiohttp server (only if we own it)."""
+        if self._owns_server:
+            if self._site:
+                await self._site.stop()
+            if self._runner:
+                await self._runner.cleanup()
 
     async def _handle_root(self, request: web.Request) -> web.Response:
         """Health check endpoint."""
