@@ -58,15 +58,15 @@ For a single DLNA speaker, you can use environment variables without a config fi
 
 ```bash
 docker run -d --network host \
-  -e QOBUZ_EMAIL=your@email.com \
-  -e QOBUZ_PASSWORD=yourpassword \
   -e QOBUZPROXY_DLNA_IP=192.168.1.50 \
   -e QOBUZPROXY_DEVICE_NAME=Living\ Room \
   -v ./data:/data \
   ghcr.io/leolobato/qobuz-proxy:latest
 ```
 
-The `/data` volume is optional here but recommended to persist the credential cache across restarts.
+Then open **http://localhost:8689** in your browser and log in to Qobuz.
+
+The `/data` volume persists auth tokens and the credential cache across restarts.
 
 ### Quick Start (Docker, multiple speakers)
 
@@ -103,14 +103,37 @@ qobuz-proxy
 
 QobuzProxy looks for `config.yaml` in the current directory by default. Use `--config` to specify a different path.
 
+### Authentication
+
+QobuzProxy authenticates with Qobuz through its built-in web UI:
+
+1. Start QobuzProxy (Docker or standalone).
+2. Open the status page at **http://localhost:8689** in your browser.
+3. Click **Login** to open the Qobuz login page.
+4. Log in with your Qobuz account credentials.
+5. After login, copy the auth token from the browser's DevTools (shown in the redirect URL).
+6. Paste the token into the form on the status page.
+
+QobuzProxy stores the token so you only need to do this once (until the token expires).
+
+**Power-user alternative:** You can skip the web UI by providing `auth_token` and `user_id` directly in your `config.yaml`:
+
+```yaml
+qobuz:
+  auth_token: "your-auth-token"
+  user_id: "your-user-id"
+```
+
+Or via environment variables: `QOBUZ_AUTH_TOKEN` and `QOBUZ_USER_ID`.
+
 ### Multi-Speaker Setup
 
 A single QobuzProxy instance can manage multiple speakers. Each speaker appears as a separate device in the Qobuz app. Use the `speakers` key in your config file:
 
 ```yaml
 qobuz:
-  email: "user@example.com"
-  password: "password"
+  auth_token: "your-auth-token"
+  user_id: "your-user-id"
 
 speakers:
   - name: "Living Room"
@@ -157,7 +180,7 @@ volumes:
   - ./data:/data
 ```
 
-The credential cache stores Qobuz web player credentials so they don't need to be re-scraped on each restart. Outside Docker, the cache defaults to `~/.qobuz-proxy/`.
+This directory stores auth tokens and the Qobuz web player credential cache so they persist across restarts. Outside Docker, the cache defaults to `~/.qobuz-proxy/`.
 
 ### Health Check
 
