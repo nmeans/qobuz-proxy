@@ -105,26 +105,27 @@ QobuzProxy looks for `config.yaml` in the current directory by default. Use `--c
 
 ### Authentication
 
-QobuzProxy authenticates with Qobuz through its built-in web UI:
+Qobuz recently migrated from email/password API authentication to an OAuth flow with reCAPTCHA. Direct email/password login no longer works. QobuzProxy now authenticates through its built-in web UI using a token from your browser session:
 
 1. Start QobuzProxy (Docker or standalone).
 2. Open the status page at **http://localhost:8689** in your browser.
-3. Click **Login** to open the Qobuz login page.
-4. Log in with your Qobuz account credentials.
-5. After login, copy the auth token from the browser's DevTools (shown in the redirect URL).
-6. Paste the token into the form on the status page.
+3. Click **Log in to Qobuz** — this opens `play.qobuz.com` in a new tab.
+4. Log in to your Qobuz account normally.
+5. Open DevTools (F12) → **Application** tab → **Local Storage** → `https://play.qobuz.com`.
+6. Click the `localuser` entry and copy its full value.
+7. Paste it into the form on the QobuzProxy status page and click **Save & Connect**.
 
-QobuzProxy stores the token so you only need to do this once (until the token expires).
+QobuzProxy extracts your user ID and auth token from the pasted value and stores them. You only need to do this once (until the token expires, at which point the status page will prompt you again).
 
 **Power-user alternative:** You can skip the web UI by providing `auth_token` and `user_id` directly in your `config.yaml`:
 
 ```yaml
 qobuz:
-  auth_token: "your-auth-token"
-  user_id: "your-user-id"
+  user_id: "12345678"
+  auth_token: "your-auth-token-from-localuser"
 ```
 
-Or via environment variables: `QOBUZ_AUTH_TOKEN` and `QOBUZ_USER_ID`.
+Or via environment variables: `QOBUZ_USER_ID` and `QOBUZ_AUTH_TOKEN`.
 
 ### Multi-Speaker Setup
 
