@@ -15,7 +15,9 @@ QobuzProxy solves this by acting as a virtual Qobuz Connect device on your netwo
 - Appears as a Qobuz Connect device in the official Qobuz app
 - Streams audio to DLNA renderers (Sonos, Denon HEOS, etc.)
 - Local audio playback via PortAudio (play directly through your machine's speakers/DAC)
+- **Web UI for speaker management** — discover, add, edit, and remove speakers from your browser
 - Auto-detects device capabilities to select optimal audio quality
+- Zero-config startup — boot with no config file, set everything up from the web UI
 - Runs on Raspberry Pi, Docker, or any Linux/macOS system
 
 ## Audio Quality
@@ -52,41 +54,19 @@ A pre-built Docker image is available from GitHub Container Registry:
 docker pull ghcr.io/leolobato/qobuz-proxy:latest
 ```
 
-### Quick Start (Docker, single speaker)
-
-For a single DLNA speaker, you can use environment variables without a config file:
+### Quick Start (Docker)
 
 ```bash
 docker run -d --network host \
-  -e QOBUZPROXY_DLNA_IP=192.168.1.50 \
-  -e QOBUZPROXY_DEVICE_NAME=Living\ Room \
   -v ./data:/data \
   ghcr.io/leolobato/qobuz-proxy:latest
 ```
 
-Then open **http://localhost:8689** in your browser and log in to Qobuz.
+Then open **http://localhost:8689** in your browser, log in to Qobuz, and add your speakers from the web UI. No config file needed.
 
-The `/data` volume persists auth tokens and the credential cache across restarts.
+The `/data` volume persists auth tokens, credentials, and speaker configuration across restarts.
 
-### Quick Start (Docker, multiple speakers)
-
-For multiple speakers, create a `config.yaml` in your data directory:
-
-```bash
-mkdir data
-cp config.yaml.example data/config.yaml
-nano data/config.yaml  # Edit with your values
-```
-
-Then run with Docker Compose:
-```bash
-docker-compose up -d
-```
-
-Or run directly:
-```bash
-docker run -d --network host -v ./data:/data ghcr.io/leolobato/qobuz-proxy:latest
-```
+You can also pre-configure speakers with a `config.yaml` or environment variables — see [Configuration](#configuration) below.
 
 View logs:
 ```bash
@@ -97,11 +77,12 @@ docker-compose logs -f
 
 ```bash
 pip install .
-cp config.yaml.example config.yaml  # Edit with your values
 qobuz-proxy
 ```
 
-QobuzProxy looks for `config.yaml` in the current directory by default. Use `--config` to specify a different path.
+Open **http://localhost:8689**, authenticate, and add speakers from the UI. Speaker configuration is saved to `config.yaml` in the current directory automatically.
+
+To use a pre-existing config file: `qobuz-proxy --config /path/to/config.yaml`
 
 ### Authentication
 
@@ -129,13 +110,13 @@ Or via environment variables: `QOBUZ_USER_ID` and `QOBUZ_AUTH_TOKEN`.
 
 ### Multi-Speaker Setup
 
-A single QobuzProxy instance can manage multiple speakers. Each speaker appears as a separate device in the Qobuz app. Use the `speakers` key in your config file:
+A single QobuzProxy instance can manage multiple speakers. Each speaker appears as a separate device in the Qobuz app.
+
+The easiest way to set up multiple speakers is through the web UI at **http://localhost:8689** — click **+ Add Speaker** for each device. The web UI will scan your network for DLNA devices and let you configure each one. Changes are saved to `config.yaml` automatically.
+
+You can also configure speakers directly in `config.yaml`:
 
 ```yaml
-qobuz:
-  auth_token: "your-auth-token"
-  user_id: "your-user-id"
-
 speakers:
   - name: "Living Room"
     backend: dlna
