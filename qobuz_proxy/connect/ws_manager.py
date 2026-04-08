@@ -112,7 +112,9 @@ class WsManager:
         if self._ws_token:
             logger.debug(f"Tokens set, endpoint: {self._ws_token.endpoint[:50]}...")
 
-        tokens_changed = previous_token != self._ws_token or previous_session_uuid != self._session_uuid
+        tokens_changed = (
+            previous_token != self._ws_token or previous_session_uuid != self._session_uuid
+        )
         if tokens_changed and self._ws and self._should_run:
             logger.info("Received refreshed WebSocket tokens, reconnecting")
             asyncio.create_task(self._close_for_token_refresh())
@@ -261,7 +263,10 @@ class WsManager:
             f"sr={sampling_rate}, bd={bit_depth}, ch={nb_channels}"
         )
         data = self._codec.encode_file_audio_quality_changed(
-            quality, sampling_rate=sampling_rate, bit_depth=bit_depth, nb_channels=nb_channels,
+            quality,
+            sampling_rate=sampling_rate,
+            bit_depth=bit_depth,
+            nb_channels=nb_channels,
         )
         return await self.send_message(data)
 
@@ -292,7 +297,10 @@ class WsManager:
             f"sr={sampling_rate}, bd={bit_depth}, ch={nb_channels}"
         )
         data = self._codec.encode_device_audio_quality_changed(
-            quality, sampling_rate=sampling_rate, bit_depth=bit_depth, nb_channels=nb_channels,
+            quality,
+            sampling_rate=sampling_rate,
+            bit_depth=bit_depth,
+            nb_channels=nb_channels,
         )
         return await self.send_message(data)
 
@@ -508,7 +516,11 @@ class WsManager:
         logged_wait = False
 
         while self._should_run:
-            if self._ws_token and self._ws_token.is_valid() and not self._ws_token.is_expired(buffer_s):
+            if (
+                self._ws_token
+                and self._ws_token.is_valid()
+                and not self._ws_token.is_expired(buffer_s)
+            ):
                 return True
 
             if not logged_wait:

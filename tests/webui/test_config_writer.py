@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import pytest
 import yaml
 
 from qobuz_proxy.config import AUTO_QUALITY, Config, SpeakerConfig

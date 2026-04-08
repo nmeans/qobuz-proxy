@@ -123,14 +123,22 @@ class TestSpeakerCRUD:
         )
         resp = await client.post(
             "/api/speakers",
-            json={"name": "Living Room", "backend": "dlna", "dlna_ip": "192.168.1.50", "dlna_port": 1400, "max_quality": 7},
+            json={
+                "name": "Living Room",
+                "backend": "dlna",
+                "dlna_ip": "192.168.1.50",
+                "dlna_port": 1400,
+                "max_quality": 7,
+            },
         )
         assert resp.status == 201
         data = await resp.json()
         assert data["id"] == "living-room"
 
     async def test_add_speaker_missing_name(self, client: TestClient) -> None:
-        resp = await client.post("/api/speakers", json={"backend": "dlna", "dlna_ip": "192.168.1.50"})
+        resp = await client.post(
+            "/api/speakers", json={"backend": "dlna", "dlna_ip": "192.168.1.50"}
+        )
         assert resp.status == 400
 
     async def test_add_speaker_missing_dlna_ip(self, client: TestClient) -> None:
@@ -139,16 +147,27 @@ class TestSpeakerCRUD:
 
     async def test_add_speaker_callback_error(self, client: TestClient) -> None:
         client.app["on_add_speaker"] = AsyncMock(side_effect=ValueError("Duplicate speaker name"))
-        resp = await client.post("/api/speakers", json={"name": "Dup", "backend": "dlna", "dlna_ip": "10.0.0.1"})
+        resp = await client.post(
+            "/api/speakers", json={"name": "Dup", "backend": "dlna", "dlna_ip": "10.0.0.1"}
+        )
         assert resp.status == 400
         data = await resp.json()
         assert "Duplicate" in data["error"]
 
     async def test_edit_speaker(self, client: TestClient) -> None:
         client.app["on_edit_speaker"] = AsyncMock(
-            return_value={"id": "living-room", "name": "Living Room", "backend": "dlna", "status": "idle", "config": {}, "now_playing": None}
+            return_value={
+                "id": "living-room",
+                "name": "Living Room",
+                "backend": "dlna",
+                "status": "idle",
+                "config": {},
+                "now_playing": None,
+            }
         )
-        resp = await client.put("/api/speakers/living-room", json={"name": "Living Room", "dlna_ip": "192.168.1.51"})
+        resp = await client.put(
+            "/api/speakers/living-room", json={"name": "Living Room", "dlna_ip": "192.168.1.51"}
+        )
         assert resp.status == 200
 
     async def test_edit_speaker_not_found(self, client: TestClient) -> None:

@@ -10,7 +10,6 @@ import pytest
 from qobuz_proxy.backends.local.backend import LocalAudioBackend
 from qobuz_proxy.backends.types import BackendTrackMetadata, PlaybackState
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -92,6 +91,7 @@ class TestPlayStateTransitions:
             patch("qobuz_proxy.backends.local.backend.sf", mock_sf, create=True),
             patch.dict("sys.modules", {"soundfile": mock_sf}),
         ):
+
             async def patched_download(url):
                 return FAKE_AUDIO_44100.copy(), 44100
 

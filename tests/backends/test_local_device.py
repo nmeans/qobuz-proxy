@@ -11,7 +11,6 @@ from qobuz_proxy.backends.local.device import (
     resolve_device,
 )
 
-
 # Mock device data matching sounddevice.query_devices() format
 MOCK_DEVICES = [
     {
@@ -86,7 +85,10 @@ class TestListAudioDevices:
     """Test list_audio_devices()."""
 
     def test_lists_output_devices_only(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             devices = list_audio_devices()
 
         # Should exclude Built-in Microphone (input only)
@@ -99,7 +101,10 @@ class TestListAudioDevices:
         assert "USB Audio Interface" in names
 
     def test_default_device_marked(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             devices = list_audio_devices()
 
         defaults = [d for d in devices if d.is_default]
@@ -107,7 +112,10 @@ class TestListAudioDevices:
         assert defaults[0].name == "Built-in Output"
 
     def test_device_properties(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             devices = list_audio_devices()
 
         dac = next(d for d in devices if d.name == "USB Audio DAC")
@@ -120,7 +128,9 @@ class TestListAudioDevices:
         def raise_import():
             raise ImportError("sounddevice is required")
 
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", side_effect=raise_import):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice", side_effect=raise_import
+        ):
             with pytest.raises(ImportError, match="sounddevice is required"):
                 list_audio_devices()
 
@@ -129,14 +139,20 @@ class TestResolveDevice:
     """Test resolve_device()."""
 
     def test_resolve_default(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             dev = resolve_device("default")
 
         assert dev.name == "Built-in Output"
         assert dev.is_default is True
 
     def test_resolve_default_case_insensitive(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             dev = resolve_device("DEFAULT")
 
         assert dev.name == "Built-in Output"
@@ -151,56 +167,83 @@ class TestResolveDevice:
         assert dev.name == "Built-in Output"
 
     def test_resolve_by_index(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             dev = resolve_device("1")
 
         assert dev.name == "USB Audio DAC"
         assert dev.index == 1
 
     def test_resolve_by_index_invalid(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             with pytest.raises(ValueError, match="No audio output device at index 99"):
                 resolve_device("99")
 
     def test_resolve_by_index_input_only(self) -> None:
         """Index 2 is an input-only device — should not resolve."""
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             with pytest.raises(ValueError, match="No audio output device at index 2"):
                 resolve_device("2")
 
     def test_resolve_by_exact_name(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             dev = resolve_device("USB Audio DAC")
 
         assert dev.name == "USB Audio DAC"
 
     def test_resolve_by_exact_name_case_insensitive(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             dev = resolve_device("usb audio dac")
 
         assert dev.name == "USB Audio DAC"
 
     def test_resolve_by_substring(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             dev = resolve_device("HDMI")
 
         assert dev.name == "HDMI Audio Output"
 
     def test_resolve_by_substring_multiple_matches(self) -> None:
         """'USB' matches both 'USB Audio DAC' and 'USB Audio Interface'."""
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             dev = resolve_device("USB")
 
         # Should return first match
         assert dev.name == "USB Audio DAC"
 
     def test_resolve_not_found(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             with pytest.raises(ValueError, match="No audio device matching 'NonexistentDevice'"):
                 resolve_device("NonexistentDevice")
 
     def test_resolve_not_found_lists_devices(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             with pytest.raises(ValueError, match="Available devices:"):
                 resolve_device("NonexistentDevice")
 
@@ -231,7 +274,10 @@ class TestFormatDeviceList:
         assert format_device_list([]) == ""
 
     def test_format_fetches_devices_when_none(self) -> None:
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             output = format_device_list(None)
 
         assert "Built-in Output" in output
@@ -244,7 +290,10 @@ class TestLocalBackendConnect:
     async def test_connect_resolves_device(self) -> None:
         from qobuz_proxy.backends.local import LocalAudioBackend
 
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             backend = LocalAudioBackend(device="USB Audio DAC")
             result = await backend.connect()
 
@@ -255,7 +304,10 @@ class TestLocalBackendConnect:
     async def test_connect_default_device(self) -> None:
         from qobuz_proxy.backends.local import LocalAudioBackend
 
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             backend = LocalAudioBackend(device="default")
             result = await backend.connect()
 
@@ -265,7 +317,10 @@ class TestLocalBackendConnect:
     async def test_connect_invalid_device(self) -> None:
         from qobuz_proxy.backends.local import LocalAudioBackend
 
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             backend = LocalAudioBackend(device="NonexistentDevice")
             result = await backend.connect()
 
@@ -291,7 +346,10 @@ class TestCliListAudioDevices:
     def test_run_list_audio_devices(self, capsys) -> None:
         from qobuz_proxy.cli import run_list_audio_devices
 
-        with patch("qobuz_proxy.backends.local.device._import_sounddevice", return_value=_mock_sounddevice()):
+        with patch(
+            "qobuz_proxy.backends.local.device._import_sounddevice",
+            return_value=_mock_sounddevice(),
+        ):
             exit_code = run_list_audio_devices()
 
         assert exit_code == 0

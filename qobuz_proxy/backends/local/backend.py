@@ -118,8 +118,7 @@ class LocalAudioBackend(AudioBackend):
             audio_data = audio_data.reshape(-1, 1)
 
         logger.debug(
-            f"Decoded: {len(audio_data)} frames, {audio_data.shape[1]}ch, "
-            f"{sample_rate}Hz"
+            f"Decoded: {len(audio_data)} frames, {audio_data.shape[1]}ch, " f"{sample_rate}Hz"
         )
         return audio_data, sample_rate
 
@@ -148,7 +147,7 @@ class LocalAudioBackend(AudioBackend):
 
                 # Feed next chunk
                 end = min(self._frames_fed + CHUNK_SIZE, self._total_frames)
-                chunk = self._audio_data[self._frames_fed:end]
+                chunk = self._audio_data[self._frames_fed : end]
                 written = self._ring_buffer.write(chunk)
                 self._frames_fed += written
 

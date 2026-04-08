@@ -1,14 +1,12 @@
 """Integration tests for QobuzProxy OAuth auth startup flow."""
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 from qobuz_proxy.app import QobuzProxy
 from qobuz_proxy.config import (
     Config,
     QobuzConfig,
     ServerConfig,
-    BackendConfig,
     LoggingConfig,
     SpeakerConfig,
 )
@@ -134,8 +132,10 @@ class TestStartupWithCachedToken:
                 "qobuz_proxy.app.load_user_token",
                 return_value={"user_id": "999", "user_auth_token": "tok"},
             ),
-            patch.object(app, "_authenticate", new_callable=AsyncMock, return_value=True) as mock_auth,
-            patch.object(app, "_start_speakers", new_callable=AsyncMock) as mock_start,
+            patch.object(
+                app, "_authenticate", new_callable=AsyncMock, return_value=True
+            ) as mock_auth,
+            patch.object(app, "_start_speakers", new_callable=AsyncMock),
         ):
             try:
                 await app.start()
@@ -208,9 +208,11 @@ class TestWebUIAuthCallback:
                 return_value={"app_id": "test-id", "app_secret": "test-secret"},
             ),
             patch("qobuz_proxy.app.load_user_token", return_value=None),
-            patch("qobuz_proxy.app.save_user_token") as mock_save,
-            patch.object(app, "_authenticate", new_callable=AsyncMock, return_value=True) as mock_auth,
-            patch.object(app, "_start_speakers", new_callable=AsyncMock) as mock_start,
+            patch("qobuz_proxy.app.save_user_token"),
+            patch.object(
+                app, "_authenticate", new_callable=AsyncMock, return_value=True
+            ) as mock_auth,
+            patch.object(app, "_start_speakers", new_callable=AsyncMock),
         ):
             try:
                 await app.start()

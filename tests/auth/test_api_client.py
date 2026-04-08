@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import AsyncMock, patch
 from qobuz_proxy.auth.api_client import QobuzAPIClient
 

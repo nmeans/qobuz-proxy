@@ -146,9 +146,7 @@ class QobuzAPIClient:
 
         return False
 
-    async def get_track_url(
-        self, track_id: str, quality: int = 27
-    ) -> Optional[dict[str, Any]]:
+    async def get_track_url(self, track_id: str, quality: int = 27) -> Optional[dict[str, Any]]:
         """
         Get streaming URL and format info for a track.
 

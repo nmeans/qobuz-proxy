@@ -119,9 +119,7 @@ def resolve_device(device_config: str) -> AudioDeviceInfo:
         logger.info(f"Using audio device (substring match): {matches[0].name}")
         return matches[0]
     elif len(matches) > 1:
-        logger.warning(
-            f"Multiple devices match '{device_config}', using first: {matches[0].name}"
-        )
+        logger.warning(f"Multiple devices match '{device_config}', using first: {matches[0].name}")
         return matches[0]
 
     raise ValueError(

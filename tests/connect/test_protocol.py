@@ -145,7 +145,10 @@ class TestEncoding:
     def test_encode_file_audio_quality_changed_with_metadata(self, codec: ProtocolCodec) -> None:
         """Test file audio quality changed encodes all 4 fields."""
         frame = codec.encode_file_audio_quality_changed(
-            quality=6, sampling_rate=44100, bit_depth=16, nb_channels=2,
+            quality=6,
+            sampling_rate=44100,
+            bit_depth=16,
+            nb_channels=2,
         )
         decoded = codec.decode_frame(frame)
         assert decoded is not None
@@ -181,7 +184,10 @@ class TestEncoding:
     def test_encode_device_audio_quality_changed_with_metadata(self, codec: ProtocolCodec) -> None:
         """Test device audio quality changed encodes sampling_rate, bit_depth, nb_channels."""
         frame = codec.encode_device_audio_quality_changed(
-            quality=7, sampling_rate=96000, bit_depth=24, nb_channels=2,
+            quality=7,
+            sampling_rate=96000,
+            bit_depth=24,
+            nb_channels=2,
         )
         decoded = codec.decode_frame(frame)
         batch = codec.decode_qconnect_batch(decoded.payload)

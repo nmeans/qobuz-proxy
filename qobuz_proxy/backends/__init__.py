@@ -34,6 +34,7 @@ from .dlna import (
     StreamingURLProvider,
     MetadataServiceURLProvider,
 )
+
 try:
     from .local import LocalAudioBackend
 except ImportError:

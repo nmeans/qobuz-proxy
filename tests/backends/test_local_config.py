@@ -145,10 +145,21 @@ class TestArgsToDict:
         from argparse import Namespace
 
         args = Namespace(
-            email=None, password=None, max_quality=None, name=None, uuid=None,
-            dlna_ip=None, dlna_port=None, fixed_volume=False,
-            audio_device="USB DAC", audio_buffer_size=None, backend_type=None,
-            http_port=None, proxy_port=None, bind=None, log_level=None,
+            email=None,
+            password=None,
+            max_quality=None,
+            name=None,
+            uuid=None,
+            dlna_ip=None,
+            dlna_port=None,
+            fixed_volume=False,
+            audio_device="USB DAC",
+            audio_buffer_size=None,
+            backend_type=None,
+            http_port=None,
+            proxy_port=None,
+            bind=None,
+            log_level=None,
         )
         result = args_to_dict(args)
         assert result["backend"]["local"]["device"] == "USB DAC"
@@ -157,10 +168,21 @@ class TestArgsToDict:
         from argparse import Namespace
 
         args = Namespace(
-            email=None, password=None, max_quality=None, name=None, uuid=None,
-            dlna_ip=None, dlna_port=None, fixed_volume=False,
-            audio_device=None, audio_buffer_size=None, backend_type="local",
-            http_port=None, proxy_port=None, bind=None, log_level=None,
+            email=None,
+            password=None,
+            max_quality=None,
+            name=None,
+            uuid=None,
+            dlna_ip=None,
+            dlna_port=None,
+            fixed_volume=False,
+            audio_device=None,
+            audio_buffer_size=None,
+            backend_type="local",
+            http_port=None,
+            proxy_port=None,
+            bind=None,
+            log_level=None,
         )
         result = args_to_dict(args)
         assert result["backend"]["type"] == "local"
@@ -169,10 +191,21 @@ class TestArgsToDict:
         from argparse import Namespace
 
         args = Namespace(
-            email=None, password=None, max_quality=None, name=None, uuid=None,
-            dlna_ip=None, dlna_port=None, fixed_volume=False,
-            audio_device=None, audio_buffer_size=4096, backend_type=None,
-            http_port=None, proxy_port=None, bind=None, log_level=None,
+            email=None,
+            password=None,
+            max_quality=None,
+            name=None,
+            uuid=None,
+            dlna_ip=None,
+            dlna_port=None,
+            fixed_volume=False,
+            audio_device=None,
+            audio_buffer_size=4096,
+            backend_type=None,
+            http_port=None,
+            proxy_port=None,
+            bind=None,
+            log_level=None,
         )
         result = args_to_dict(args)
         assert result["backend"]["local"]["buffer_size"] == 4096

@@ -81,10 +81,10 @@ PROTOCOL_TO_QUALITY = {1: 5, 2: 6, 3: 7, 4: 27}
 
 # Default audio properties for each quality level: (sample_rate_hz, bit_depth, nb_channels)
 QUALITY_AUDIO_PROPERTIES = {
-    5: (44100, 16, 2),   # MP3 320kbps
-    6: (44100, 16, 2),   # CD quality FLAC
-    7: (96000, 24, 2),   # Hi-Res 96kHz
-    27: (192000, 24, 2), # Hi-Res 192kHz
+    5: (44100, 16, 2),  # MP3 320kbps
+    6: (44100, 16, 2),  # CD quality FLAC
+    7: (96000, 24, 2),  # Hi-Res 96kHz
+    27: (192000, 24, 2),  # Hi-Res 192kHz
 }
 
 
