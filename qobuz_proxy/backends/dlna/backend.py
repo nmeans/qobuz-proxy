@@ -58,6 +58,7 @@ class DLNABackend(AudioBackend):
         port: int = 1400,
         fixed_volume: bool = False,
         name: Optional[str] = None,
+        description_url: Optional[str] = None,
     ):
         """
         Initialize DLNA backend.
@@ -67,11 +68,13 @@ class DLNABackend(AudioBackend):
             port: DLNA device port (default 1400 for Sonos)
             fixed_volume: If True, ignore volume commands
             name: Display name (auto-detected if not provided)
+            description_url: Full URL to UPnP device description XML
         """
         super().__init__(name or f"DLNA ({ip})")
         self._ip = ip
         self._port = port
         self._fixed_volume = fixed_volume
+        self._description_url = description_url
 
         self._client: Optional[DLNAClient] = None
         self._poll_task: Optional[asyncio.Task] = None
@@ -119,7 +122,7 @@ class DLNABackend(AudioBackend):
     async def connect(self) -> bool:
         """Connect to DLNA device."""
         try:
-            self._client = DLNAClient(self._ip, self._port)
+            self._client = DLNAClient(self._ip, self._port, description_url=self._description_url)
             device_info = await self._client.connect()
 
             # Update name from device

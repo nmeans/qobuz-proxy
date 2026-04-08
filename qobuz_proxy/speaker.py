@@ -128,6 +128,7 @@ class Speaker:
                     port=self._config.dlna_port,
                     fixed_volume=self._config.dlna_fixed_volume,
                     proxy_port=self._config.proxy_port,
+                    description_url=self._config.dlna_description_url,
                 ),
                 local=LocalConfig(
                     device=self._config.audio_device,

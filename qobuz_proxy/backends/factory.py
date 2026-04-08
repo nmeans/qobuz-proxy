@@ -71,9 +71,15 @@ class BackendFactory:
 
         # Dispatch to type-specific factory method
         if backend_type == "dlna":
+            description_url = config.backend.dlna.description_url or None
+            if not description_url:
+                description_url = await cls._discover_description_url(
+                    config.backend.dlna.ip, config.backend.dlna.port or 1400
+                )
             return await cls.create_dlna(
                 ip=config.backend.dlna.ip,
                 port=config.backend.dlna.port or 1400,
+                description_url=description_url,
             )
         elif backend_type == "local":
             return await cls.create_local(
@@ -91,6 +97,7 @@ class BackendFactory:
         port: int = 1400,
         fixed_volume: bool = False,
         name: Optional[str] = None,
+        description_url: Optional[str] = None,
     ) -> AudioBackend:
         """
         Create a DLNA backend.
@@ -100,6 +107,7 @@ class BackendFactory:
             port: DLNA device port (default 1400 for Sonos)
             fixed_volume: If True, ignore volume commands
             name: Display name (auto-detected if not provided)
+            description_url: Full URL to UPnP device description XML
 
         Returns:
             Connected DLNABackend instance
@@ -112,10 +120,36 @@ class BackendFactory:
             port=port,
             fixed_volume=fixed_volume,
             name=name,
+            description_url=description_url,
         )
         if await backend.connect():
             return backend
         raise BackendNotFoundError(f"Failed to connect to DLNA device at {ip}:{port}")
+
+    @classmethod
+    async def _discover_description_url(cls, target_ip: str, target_port: int) -> Optional[str]:
+        """Run SSDP discovery and find the description URL for a device by IP.
+
+        Uses a short timeout since we only need to match a specific device.
+
+        Returns:
+            SSDP LOCATION URL if found, None otherwise.
+        """
+        from qobuz_proxy.backends.dlna.discovery import DLNADiscovery
+
+        try:
+            discovery = DLNADiscovery()
+            devices = await discovery.discover(timeout=3.0)
+            for device in devices:
+                if device.ip == target_ip and device.location:
+                    logger.info(
+                        f"Auto-discovered description URL for {target_ip}: {device.location}"
+                    )
+                    return device.location
+            logger.debug(f"SSDP discovery did not find device at {target_ip}")
+        except Exception as e:
+            logger.debug(f"SSDP discovery failed: {e}")
+        return None
 
     @classmethod
     async def create_local(

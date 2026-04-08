@@ -100,6 +100,7 @@ class DLNAConfig:
     port: int = 1400
     fixed_volume: bool = False
     proxy_port: int = 7120
+    description_url: str = ""  # Full URL to UPnP device description XML (auto-discovered via SSDP)
 
 
 @dataclass
@@ -147,6 +148,7 @@ class SpeakerConfig:
     dlna_ip: str = ""
     dlna_port: int = 1400
     dlna_fixed_volume: bool = False
+    dlna_description_url: str = ""
     proxy_port: int = 0  # 0 = auto-assign
     audio_device: str = "default"
     audio_buffer_size: int = 2048
@@ -238,11 +240,12 @@ def _single_speaker_from_config(config: Config) -> SpeakerConfig:
         uuid=config.device.uuid,
         backend_type=config.backend.type,
         max_quality=config.qobuz.max_quality,
-        http_port=config.server.http_port,
+        http_port=0,  # auto-assigned by _assign_ports (avoids conflict with web UI port)
         bind_address=config.server.bind_address,
         dlna_ip=config.backend.dlna.ip,
         dlna_port=config.backend.dlna.port,
         dlna_fixed_volume=config.backend.dlna.fixed_volume,
+        dlna_description_url=config.backend.dlna.description_url,
         proxy_port=config.backend.dlna.proxy_port,
         audio_device=config.backend.local.device,
         audio_buffer_size=config.backend.local.buffer_size,
@@ -347,6 +350,7 @@ def _parse_yaml_speakers(raw_speakers: list[dict], config: Config) -> list[Speak
             dlna_ip=raw.get("dlna_ip", ""),
             dlna_port=int(raw.get("dlna_port", 1400)),
             dlna_fixed_volume=bool(raw.get("dlna_fixed_volume", False)),
+            dlna_description_url=raw.get("dlna_description_url", ""),
             proxy_port=int(raw.get("proxy_port", 0)),
             audio_device=raw.get("audio_device", "default"),
             audio_buffer_size=int(raw.get("audio_buffer_size", 2048)),
@@ -588,6 +592,9 @@ def dict_to_config(d: dict) -> Config:
                 "fixed_volume", config.backend.dlna.fixed_volume
             )
             config.backend.dlna.proxy_port = dlna.get("proxy_port", config.backend.dlna.proxy_port)
+            config.backend.dlna.description_url = dlna.get(
+                "description_url", config.backend.dlna.description_url
+            )
         if "local" in b:
             local = b["local"]
             config.backend.local.device = local.get("device", config.backend.local.device)

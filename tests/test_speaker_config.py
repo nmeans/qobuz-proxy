@@ -80,7 +80,7 @@ class TestSingleSpeakerNormalization:
         assert speaker.dlna_fixed_volume is True
         assert speaker.proxy_port == 7120
         assert speaker.max_quality == 7
-        assert speaker.http_port == 8689
+        assert speaker.http_port == 0  # auto-assigned by _assign_ports to avoid web UI conflict
         assert speaker.bind_address == "192.168.1.1"
 
     def test_flat_local_config_to_speaker(self):

@@ -78,16 +78,18 @@ class DLNAClient:
     - Retry logic for transient failures
     """
 
-    def __init__(self, ip: str, port: int = 1400):
+    def __init__(self, ip: str, port: int = 1400, description_url: Optional[str] = None):
         """
         Initialize DLNA client.
 
         Args:
             ip: Device IP address
             port: Device port (default 1400 for Sonos)
+            description_url: Full URL to UPnP device description XML (from SSDP LOCATION)
         """
         self.ip = ip
         self.port = port
+        self.description_url = description_url
         self.device_info: Optional[DLNADeviceInfo] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self._last_volume_time_ms: float = 0
@@ -564,35 +566,54 @@ class DLNAClient:
     # =========================================================================
 
     async def _fetch_device_description(self) -> DLNADeviceInfo:
-        """Fetch and parse device description XML."""
+        """Fetch and parse device description XML.
+
+        If a description_url is available (from SSDP LOCATION or config), it is
+        tried first.  Falls back to probing well-known paths on ip:port.
+        """
         if not self._session:
             raise DLNAClientError("Session not initialized")
 
-        # Common paths to try
-        paths = [
-            "/xml/device_description.xml",  # Sonos
-            "/description.xml",
-            "/DeviceDescription.xml",
-            "/upnp/desc/aios_device/aios_device.xml",  # Denon/Marantz
-            "/dmr/SamsungMRDesc.xml",  # Samsung
-            "/rootDesc.xml",
-        ]
+        from urllib.parse import urlparse
 
         xml_text = None
         base_url = None
 
-        for path in paths:
-            url = f"http://{self.ip}:{self.port}{path}"
+        # 1. Try the SSDP LOCATION URL directly (authoritative source)
+        if self.description_url:
             try:
-                async with self._session.get(url) as response:
+                async with self._session.get(self.description_url) as response:
                     if response.status == 200:
                         xml_text = await response.text()
-                        base_url = f"http://{self.ip}:{self.port}"
-                        logger.debug(f"Found device description at {url}")
-                        break
+                        parsed = urlparse(self.description_url)
+                        base_url = f"{parsed.scheme}://{parsed.hostname}:{parsed.port or 80}"
+                        logger.debug(f"Found device description at {self.description_url}")
             except Exception as e:
-                logger.debug(f"Path {path} failed: {e}")
-                continue
+                logger.debug(f"SSDP location {self.description_url} failed: {e}")
+
+        # 2. Fall back to well-known paths
+        if not xml_text:
+            paths = [
+                "/xml/device_description.xml",  # Sonos
+                "/description.xml",
+                "/DeviceDescription.xml",
+                "/upnp/desc/aios_device/aios_device.xml",  # Denon/Marantz
+                "/dmr/SamsungMRDesc.xml",  # Samsung
+                "/rootDesc.xml",
+            ]
+
+            for path in paths:
+                url = f"http://{self.ip}:{self.port}{path}"
+                try:
+                    async with self._session.get(url) as response:
+                        if response.status == 200:
+                            xml_text = await response.text()
+                            base_url = f"http://{self.ip}:{self.port}"
+                            logger.debug(f"Found device description at {url}")
+                            break
+                except Exception as e:
+                    logger.debug(f"Path {path} failed: {e}")
+                    continue
 
         if not xml_text:
             raise DLNAClientError(f"Could not find device description for {self.ip}:{self.port}")

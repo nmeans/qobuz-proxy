@@ -106,6 +106,9 @@ class DLNADiscovery:
                     )
                 except asyncio.TimeoutError:
                     continue
+                except BlockingIOError:
+                    await asyncio.sleep(0.05)
+                    continue
                 except Exception as e:
                     logger.debug(f"Error receiving SSDP response: {e}")
                     continue
