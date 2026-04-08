@@ -73,7 +73,7 @@ class QobuzProxy:
 
     async def start(self) -> None:
         """Start web server, fetch app credentials, attempt auto-auth."""
-        logger.info("Starting QobuzProxy...")
+        logger.info("Starting qobuz-proxy...")
 
         # 1. Start the HTTP server so the web UI is reachable immediately
         await self._start_web_server()
@@ -119,7 +119,7 @@ class QobuzProxy:
         self._is_running = False
         await self._stop_speakers()
         await self._stop_web_server()
-        logger.info("QobuzProxy stopped")
+        logger.info("qobuz-proxy stopped")
 
     async def run(self) -> None:
         """Run until SIGINT / SIGTERM."""
@@ -318,7 +318,7 @@ class QobuzProxy:
         self._speakers = started
         names = ", ".join(s.name for s in self._speakers)
         port = self._config.server.http_port
-        logger.info(f"QobuzProxy ready — {len(self._speakers)} speaker(s): {names}")
+        logger.info(f"qobuz-proxy ready — {len(self._speakers)} speaker(s): {names}")
         logger.info(f"Web UI: http://localhost:{port}")
 
     async def _stop_speakers(self) -> None:

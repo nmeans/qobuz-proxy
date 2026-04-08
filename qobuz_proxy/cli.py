@@ -392,7 +392,7 @@ def run_serve(args: argparse.Namespace) -> int:
     # Setup basic logging first (will be reconfigured after config load)
     setup_logging("info")
 
-    logger.info(f"QobuzProxy v{__version__}")
+    logger.info(f"qobuz-proxy v{__version__}")
 
     try:
         # Load configuration

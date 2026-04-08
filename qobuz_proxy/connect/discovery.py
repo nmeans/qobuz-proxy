@@ -163,7 +163,7 @@ class DiscoveryService:
     async def _handle_root(self, request: web.Request) -> web.Response:
         """Health check endpoint."""
         return web.Response(
-            text=f"QobuzProxy - {self.config.device.name}",
+            text=f"qobuz-proxy - {self.config.device.name}",
             content_type="text/plain",
         )
 
@@ -182,8 +182,8 @@ class DiscoveryService:
         response = {
             "type": "SPEAKER",
             "friendly_name": self.config.device.name,
-            "model_display_name": "QobuzProxy",
-            "brand_display_name": "QobuzProxy",
+            "model_display_name": "qobuz-proxy",
+            "brand_display_name": "qobuz-proxy",
             "serial_number": self.config.device.uuid,
             "max_audio_quality": quality_str,
         }
