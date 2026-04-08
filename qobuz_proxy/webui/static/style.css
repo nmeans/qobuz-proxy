@@ -208,6 +208,33 @@ button:hover {
     margin-top: 8px;
 }
 
+/* Auth user display */
+
+.auth-user {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.auth-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.auth-user-info {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.auth-email {
+    font-size: 13px;
+    color: #888888;
+}
+
 /* Text helpers */
 
 p {

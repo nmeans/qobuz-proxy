@@ -52,8 +52,14 @@
                 <span class="status-dot status-success"></span>
                 <span>Connected</span>
             </div>
-            <p>Logged in as <strong id="auth-email"></strong></p>
-            <button class="button-danger" onclick="logout()">Logout</button>
+            <div class="auth-user">
+                <img id="auth-avatar" class="auth-avatar" src="" alt="" style="display: none;">
+                <div class="auth-user-info">
+                    <strong id="auth-name"></strong>
+                    <span id="auth-email" class="auth-email"></span>
+                </div>
+                <button class="button-danger" onclick="logout()">Logout</button>
+            </div>
         </div>
 
         <!-- Speakers Section -->

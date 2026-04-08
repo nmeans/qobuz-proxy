@@ -55,6 +55,8 @@ class QobuzProxy:
             "authenticated": False,
             "user_id": "",
             "email": "",
+            "name": "",
+            "avatar": "",
         }
 
         # Shared aiohttp application (web UI + per-speaker discovery routes)
@@ -187,12 +189,17 @@ class QobuzProxy:
     # Web UI callbacks
     # ------------------------------------------------------------------
 
-    async def _on_auth_token(self, user_id: str, auth_token: str) -> bool:
+    async def _on_auth_token(
+        self, user_id: str, auth_token: str, profile: dict[str, str] | None = None
+    ) -> bool:
         """Called by the web UI when the user submits a token.
 
         Validates credentials, persists them to cache, and starts speakers
         if they are not already running.
         """
+        if profile is None:
+            profile = {}
+
         # Ensure app credentials are available
         if not self._app_id:
             credentials = await auto_fetch_credentials()
@@ -205,13 +212,19 @@ class QobuzProxy:
         if not await self._authenticate(user_id, auth_token):
             return False
 
+        email = profile.get("email", "")
+        name = profile.get("name", "")
+        avatar = profile.get("avatar", "")
+
         # Persist to cache
-        save_user_token(user_id=user_id, auth_token=auth_token, email="")
+        save_user_token(user_id=user_id, auth_token=auth_token, email=email)
 
         # Update shared auth state
         self._auth_state["authenticated"] = True
         self._auth_state["user_id"] = user_id
-        self._auth_state["email"] = ""
+        self._auth_state["email"] = email
+        self._auth_state["name"] = name
+        self._auth_state["avatar"] = avatar
 
         # Start speakers if not already running
         if not self._speakers:

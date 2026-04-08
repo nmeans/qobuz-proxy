@@ -70,7 +70,9 @@ async def test_auth_token_success(client: TestClient) -> None:
     assert resp.status == 200
     data = await resp.json()
     assert data["status"] == "ok"
-    client.app["on_auth_token"].assert_awaited_once_with("12345", "secret-token")  # type: ignore[union-attr]
+    client.app["on_auth_token"].assert_awaited_once_with(  # type: ignore[union-attr]
+        "12345", "secret-token", {"email": "", "name": "", "avatar": ""}
+    )
 
 
 async def test_auth_token_failure(client: TestClient) -> None:

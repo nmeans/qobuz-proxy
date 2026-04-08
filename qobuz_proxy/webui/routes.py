@@ -55,8 +55,15 @@ async def _handle_auth_token(request: web.Request) -> web.Response:
     if not user_id or not user_auth_token:
         return web.json_response({"error": "missing_fields"}, status=400)
 
+    # Optional profile fields from localuser paste
+    profile = {
+        "email": body.get("email", ""),
+        "name": body.get("name", ""),
+        "avatar": body.get("avatar", ""),
+    }
+
     callback = request.app["on_auth_token"]
-    success: bool = await callback(user_id, user_auth_token)
+    success: bool = await callback(user_id, user_auth_token, profile)
 
     if success:
         return web.json_response({"status": "ok"})

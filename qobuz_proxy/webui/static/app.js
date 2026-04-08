@@ -64,7 +64,16 @@
 
                 // Update auth state
                 if (auth.authenticated) {
-                    document.getElementById("auth-email").textContent = auth.email || "User " + auth.user_id;
+                    var displayName = auth.name || auth.email || "User " + auth.user_id;
+                    document.getElementById("auth-name").textContent = displayName;
+                    document.getElementById("auth-email").textContent = auth.email && auth.name ? auth.email : "";
+                    var avatarEl = document.getElementById("auth-avatar");
+                    if (auth.avatar) {
+                        avatarEl.src = auth.avatar;
+                        avatarEl.style.display = "";
+                    } else {
+                        avatarEl.style.display = "none";
+                    }
                     showAuthState("connected");
                 } else {
                     // Only switch to disconnected if we're not in login flow
@@ -103,12 +112,18 @@
 
     function parseLocalUser(raw) {
         // Parse the localuser LocalStorage value.
-        // Expected format: {"id":8998208,"token":"...","email":"...","name":"...",...}
+        // Expected format: {"id":8998208,"token":"...","email":"...","name":"...","avatar":"...",...}
         var s = raw.trim();
         try {
             var obj = JSON.parse(s);
             if (obj && typeof obj === "object" && obj.id && obj.token) {
-                return { user_id: String(obj.id), user_auth_token: obj.token };
+                return {
+                    user_id: String(obj.id),
+                    user_auth_token: obj.token,
+                    email: obj.email || "",
+                    name: obj.name || "",
+                    avatar: obj.avatar || "",
+                };
             }
         } catch (e) {
             // Not valid JSON
@@ -137,7 +152,13 @@
         fetch("/api/auth/token", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: userId, user_auth_token: authToken }),
+            body: JSON.stringify({
+                user_id: userId,
+                user_auth_token: authToken,
+                email: parsed.email,
+                name: parsed.name,
+                avatar: parsed.avatar,
+            }),
         })
             .then(function (response) {
                 if (!response.ok) {
