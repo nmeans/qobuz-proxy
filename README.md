@@ -10,6 +10,10 @@ QobuzProxy solves this by acting as a virtual Qobuz Connect device on your netwo
 
 **In short:** Run QobuzProxy on a Raspberry Pi (or Docker or any always-on machine) on your local network, and your Sonos speakers become fully controllable Qobuz Connect targets — play, pause, skip, and adjust volume, all from the official Qobuz app.
 
+<p align="center">
+  <img src="docs/images/webui-speakers.png" alt="QobuzProxy Web UI" width="500">
+</p>
+
 ## Features
 
 - Appears as a Qobuz Connect device in the official Qobuz app
