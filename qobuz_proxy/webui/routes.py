@@ -35,7 +35,7 @@ async def _handle_status(request: web.Request) -> web.Response:
     uptime_seconds = time.monotonic() - _start_time
     data: dict[str, Any] = {
         "auth": app["auth_state"],
-        "speakers": app["speakers"],
+        "speakers": app["get_speakers"](),
         "version": app["version"],
         "uptime": _format_uptime(uptime_seconds),
     }

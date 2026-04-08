@@ -241,7 +241,9 @@ class QobuzProxy:
 
         # Expose state for route handlers
         self._web_app["auth_state"] = self._auth_state
-        self._web_app["speakers"] = []
+        self._web_app["get_speakers"] = lambda: [
+            {"name": s.name, "status": "running", "connected": True} for s in self._speakers
+        ]
         self._web_app["version"] = __version__
         self._web_app["on_auth_token"] = self._on_auth_token
         self._web_app["on_logout"] = self._on_logout
@@ -281,7 +283,6 @@ class QobuzProxy:
                 config=sc,
                 api_client=self._api_client,
                 app_id=self._app_id,
-                web_app=self._web_app,
             )
             for sc in self._config.speakers
         ]
@@ -302,13 +303,6 @@ class QobuzProxy:
             return
 
         self._speakers = started
-
-        # Update web UI speaker list
-        if self._web_app is not None:
-            self._web_app["speakers"] = [
-                {"name": s.name, "status": "running"} for s in self._speakers
-            ]
-
         names = ", ".join(s.name for s in self._speakers)
         logger.info(f"QobuzProxy ready — {len(self._speakers)} speaker(s): {names}")
 
@@ -317,6 +311,3 @@ class QobuzProxy:
         if self._speakers:
             await asyncio.gather(*[s.stop() for s in self._speakers], return_exceptions=True)
             self._speakers = []
-
-        if self._web_app is not None:
-            self._web_app["speakers"] = []

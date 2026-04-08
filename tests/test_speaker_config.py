@@ -219,9 +219,10 @@ class TestPortAssignment:
             SpeakerConfig(name="C", backend_type="dlna"),
         ]
         _assign_ports(speakers)
-        assert speakers[0].http_port == DEFAULT_HTTP_PORT
-        assert speakers[1].http_port == DEFAULT_HTTP_PORT + 1
-        assert speakers[2].http_port == DEFAULT_HTTP_PORT + 2
+        # Port 8689 is reserved for the web UI, speakers start at 8690
+        assert speakers[0].http_port == DEFAULT_HTTP_PORT + 1
+        assert speakers[1].http_port == DEFAULT_HTTP_PORT + 2
+        assert speakers[2].http_port == DEFAULT_HTTP_PORT + 3
         assert speakers[0].proxy_port == DEFAULT_PROXY_PORT
         assert speakers[1].proxy_port == DEFAULT_PROXY_PORT + 1
         assert speakers[2].proxy_port == DEFAULT_PROXY_PORT + 2
@@ -234,7 +235,8 @@ class TestPortAssignment:
         _assign_ports(speakers)
         assert speakers[0].http_port == 9000
         assert speakers[0].proxy_port == 8000
-        assert speakers[1].http_port == DEFAULT_HTTP_PORT
+        # Port 8689 is reserved for the web UI, auto-assign starts at 8690
+        assert speakers[1].http_port == DEFAULT_HTTP_PORT + 1
         assert speakers[1].proxy_port == DEFAULT_PROXY_PORT
 
     def test_local_backend_gets_no_proxy_port(self):
@@ -243,13 +245,13 @@ class TestPortAssignment:
         assert speakers[0].proxy_port == 0  # not assigned for local
 
     def test_explicit_ports_not_reused(self):
-        # Speaker A takes DEFAULT_HTTP_PORT; Speaker B should get DEFAULT_HTTP_PORT+1
+        # Speaker A takes DEFAULT_HTTP_PORT+1; Speaker B should get DEFAULT_HTTP_PORT+2
         speakers = [
-            SpeakerConfig(name="A", backend_type="dlna", http_port=DEFAULT_HTTP_PORT),
+            SpeakerConfig(name="A", backend_type="dlna", http_port=DEFAULT_HTTP_PORT + 1),
             SpeakerConfig(name="B", backend_type="dlna"),
         ]
         _assign_ports(speakers)
-        assert speakers[1].http_port == DEFAULT_HTTP_PORT + 1
+        assert speakers[1].http_port == DEFAULT_HTTP_PORT + 2
 
 
 class TestUUIDGeneration:

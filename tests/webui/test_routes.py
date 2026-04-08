@@ -14,7 +14,7 @@ def make_app(auth_state: dict | None = None) -> web.Application:
     if auth_state is None:
         auth_state = {"authenticated": False, "user_id": "", "email": ""}
     app["auth_state"] = auth_state
-    app["speakers"] = []
+    app["get_speakers"] = lambda: []
     app["version"] = "0.1.0"
     app["on_auth_token"] = AsyncMock(return_value=True)
     app["on_logout"] = AsyncMock()
@@ -34,7 +34,7 @@ async def authed_client():
     app = make_app(
         auth_state={"authenticated": True, "user_id": "12345", "email": "user@example.com"}
     )
-    app["speakers"] = [{"name": "Living Room", "backend": "dlna", "status": "playing"}]
+    app["get_speakers"] = lambda: [{"name": "Living Room", "backend": "dlna", "status": "playing"}]
     async with TestClient(TestServer(app)) as c:
         yield c
 

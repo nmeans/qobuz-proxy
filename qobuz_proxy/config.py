@@ -249,9 +249,11 @@ def _single_speaker_from_config(config: Config) -> SpeakerConfig:
     )
 
 
-def _assign_ports(speakers: list[SpeakerConfig]) -> None:
+def _assign_ports(speakers: list[SpeakerConfig], webui_port: int = DEFAULT_HTTP_PORT) -> None:
     """Auto-assign http_port and proxy_port to speakers that have 0 (auto)."""
     used_http: set[int] = {s.http_port for s in speakers if s.http_port != 0}
+    # Reserve the web UI port so speakers don't collide with it
+    used_http.add(webui_port)
     used_proxy: set[int] = {s.proxy_port for s in speakers if s.proxy_port != 0}
 
     next_http = DEFAULT_HTTP_PORT
@@ -436,7 +438,7 @@ def build_speaker_configs(
         else:
             speakers = [_single_speaker_from_config(config)]
 
-    _assign_ports(speakers)
+    _assign_ports(speakers, webui_port=config.server.http_port)
     _generate_uuids(speakers)
     _validate_speakers(speakers)
 
