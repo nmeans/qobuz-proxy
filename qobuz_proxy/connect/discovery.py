@@ -293,7 +293,16 @@ class DiscoveryService:
 
         self._zeroconf = Zeroconf()
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._zeroconf.register_service, self._service_info)
+        try:
+            await loop.run_in_executor(None, self._zeroconf.register_service, self._service_info)
+        except Exception:
+            # Name may conflict with a stale entry from a previous run — re-register as owner
+            await loop.run_in_executor(
+                None,
+                lambda: self._zeroconf.register_service(
+                    self._service_info, cooperating_responders=True
+                ),
+            )
 
         logger.info(
             f"Registered mDNS service: {self.config.device.name} "
