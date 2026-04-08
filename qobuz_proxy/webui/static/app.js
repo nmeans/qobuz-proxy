@@ -25,7 +25,9 @@
             document.getElementById("add-speaker-btn").style.display = "none";
         } else if (state === "connected") {
             document.getElementById("auth-connected").style.display = "";
-            document.getElementById("add-speaker-btn").style.display = "";
+            if (!addPanelOpen) {
+                document.getElementById("add-speaker-btn").style.display = "";
+            }
         }
     }
 
@@ -304,7 +306,10 @@
     }
 
     function updateSpeakers(speakers) {
-        var json = JSON.stringify(speakers) + (editingSpeakerId || "");
+        // Don't re-render while add or edit panel is open — avoids clobbering user input
+        if (addPanelOpen || editingSpeakerId) return;
+
+        var json = JSON.stringify(speakers);
         if (json === lastSpeakersJson) return;
         lastSpeakersJson = json;
 
@@ -346,6 +351,7 @@
         addPanelOpen = false;
         selectedBackend = null;
         selectedDevice = null;
+        lastSpeakersJson = "";
         var panel = document.getElementById("add-speaker-panel");
         panel.style.display = "none";
         panel.innerHTML = "";
