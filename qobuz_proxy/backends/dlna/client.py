@@ -406,7 +406,7 @@ class DLNAClient:
                     self._volume_debounce_task = asyncio.create_task(
                         self._send_pending_volume(delay_ms / 1000.0)
                     )
-                logger.debug(f"Debouncing SetVolume({volume}), will send in {delay_ms:.0f}ms")
+                    logger.debug(f"Debouncing SetVolume({volume}), will send in {delay_ms:.0f}ms")
                 return True
 
             # Clear any pending volume since we're sending now
