@@ -16,7 +16,7 @@ pip install -e ".[dev,local]"              # Include local audio backend (soundd
 
 # Run
 python3 -m qobuz_proxy
-qobuz-proxy --config config.yaml
+qobuz-proxy --config config.yaml           # Then visit http://localhost:8689 to log in
 qobuz-proxy --discover                    # Find DLNA renderers
 
 # Test
@@ -52,7 +52,7 @@ Proto files in `protos/`: `qconnect_common.proto`, `qconnect_envelope.proto`, `q
 
 `QobuzProxy` in `app.py` is the main orchestrator. It wires together:
 
-1. **Auth** (`auth/`): Scrapes Qobuz web player for app credentials (`credentials.py`), signs API requests with MD5 (`api_client.py`), manages session/JWT tokens (`tokens.py`)
+1. **Auth** (`auth/`): Scrapes Qobuz web player for app credentials (`credentials.py`), signs API requests with MD5 (`api_client.py`), manages session/JWT tokens (`tokens.py`). User auth is token-based (OAuth) via the web UI at `localhost:8689` or config fields `auth_token`/`user_id`.
 2. **Connect** (`connect/`): Registers as mDNS device + HTTP discovery endpoints (`discovery.py`), manages WebSocket connection to Qobuz servers (`ws_manager.py`), encodes/decodes protobuf messages (`protocol.py`)
 3. **Playback** (`playback/`): State machine player (`player.py`), queue management (`queue.py`), track metadata from Qobuz API (`metadata.py`), command handlers (`command_handler.py`, `queue_handler.py`, `volume_handler.py`), periodic state reporting to Qobuz app (`state_reporter.py`)
 4. **Backend** (`backends/`): Abstract `AudioBackend` interface (`base.py`), factory/registry pattern (`factory.py`). Two implementations:
@@ -77,14 +77,14 @@ When `max_quality: auto`: DLNA `GetProtocolInfo` → `capabilities.py` parses Si
 
 1. CLI arguments (highest) → 2. Environment variables → 3. YAML config file → 4. Code defaults
 
-Key env vars: `QOBUZ_EMAIL`, `QOBUZ_PASSWORD`, `QOBUZ_MAX_QUALITY`, `QOBUZPROXY_BACKEND`, `QOBUZPROXY_DEVICE_NAME`, `QOBUZPROXY_DLNA_IP`, `QOBUZPROXY_AUDIO_DEVICE`, `QOBUZPROXY_LOG_LEVEL`
+Key env vars: `QOBUZ_AUTH_TOKEN`, `QOBUZ_USER_ID`, `QOBUZ_EMAIL`, `QOBUZ_MAX_QUALITY`, `QOBUZPROXY_BACKEND`, `QOBUZPROXY_DEVICE_NAME`, `QOBUZPROXY_DLNA_IP`, `QOBUZPROXY_AUDIO_DEVICE`, `QOBUZPROXY_LOG_LEVEL`
 
 ## Code Style
 
 - **Black** with 100 char line length, **Ruff** for linting, **mypy** strict
 - Type hints required on all public functions, Google-style docstrings only for non-obvious APIs
 - All I/O is async. No blocking calls in main event loop
-- Never log passwords
+- Never log passwords or auth tokens
 
 ## Testing
 
