@@ -263,7 +263,7 @@ class QobuzProxy:
 
         register_routes(self._web_app)
 
-        self._web_runner = web.AppRunner(self._web_app)
+        self._web_runner = web.AppRunner(self._web_app, access_log=None)
         await self._web_runner.setup()
         self._web_site = web.TCPSite(
             self._web_runner,
