@@ -42,11 +42,10 @@ ENV QOBUZPROXY_DATA_DIR=/data
 # 7120: Audio proxy server for DLNA streaming
 EXPOSE 8689 7120
 
-# Health check - verify HTTP server is responding
-# Uses QOBUZPROXY_HTTP_PORT env var if set, otherwise defaults to 8689
+# Health check - verify web UI server is responding
 # Note: With host networking, this checks localhost
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:${QOBUZPROXY_HTTP_PORT:-8689}/streamcore/get-display-info || exit 1
+    CMD curl -sf http://localhost:${QOBUZPROXY_HTTP_PORT:-8689}/api/status || exit 1
 
 # Default command
 CMD ["qobuz-proxy"]
