@@ -164,6 +164,7 @@ class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     speakers: list[SpeakerConfig] = field(default_factory=list)
+    config_path: Optional[Path] = None  # Set by load_config() when loading from file
 
 
 def validate_email(email: str) -> bool:
@@ -707,6 +708,9 @@ def load_config(
 
     # Convert to Config object (fills in defaults)
     config = dict_to_config(merged)
+
+    # Remember where the config was loaded from (for runtime persistence)
+    config.config_path = config_path
 
     # Build speaker configs
     config.speakers = build_speaker_configs(config, raw_yaml_speakers)

@@ -8,6 +8,7 @@ web UI even before a valid Qobuz token is available.
 
 import asyncio
 import logging
+import os
 import signal
 from typing import Optional
 
@@ -21,8 +22,16 @@ from qobuz_proxy.auth import (
     load_user_token,
     save_user_token,
 )
-from qobuz_proxy.config import Config
+from qobuz_proxy.config import (
+    AUTO_QUALITY,
+    Config,
+    SpeakerConfig,
+    _assign_ports,
+    _generate_uuids,
+    slugify_name,
+)
 from qobuz_proxy.speaker import Speaker
+from qobuz_proxy.webui.config_writer import save_config
 from qobuz_proxy.webui.routes import register_routes
 
 logger = logging.getLogger(__name__)
@@ -245,6 +254,133 @@ class QobuzProxy:
         clear_user_token()
 
     # ------------------------------------------------------------------
+    # Speaker management (hot add / edit / remove)
+    # ------------------------------------------------------------------
+
+    async def _on_add_speaker(self, body: dict) -> dict:
+        """Add a new speaker at runtime."""
+        name = body["name"].strip()
+        backend_type = body.get("backend", "dlna")
+
+        # Check for duplicate names
+        for s in self._speakers:
+            if slugify_name(s.name) == slugify_name(name):
+                raise ValueError(f"Speaker '{name}' already exists")
+
+        # Build SpeakerConfig
+        quality_raw = body.get("max_quality", "auto")
+        if isinstance(quality_raw, str) and quality_raw.lower() == "auto":
+            max_quality = AUTO_QUALITY
+        else:
+            max_quality = int(quality_raw)
+
+        sc = SpeakerConfig(
+            name=name,
+            backend_type=backend_type,
+            max_quality=max_quality,
+            dlna_ip=body.get("dlna_ip", ""),
+            dlna_port=int(body.get("dlna_port", 1400)),
+            dlna_fixed_volume=bool(body.get("fixed_volume", False)),
+            dlna_description_url=body.get("description_url", ""),
+            audio_device=body.get("audio_device", "default"),
+            audio_buffer_size=int(body.get("buffer_size", 2048)),
+        )
+
+        # Assign ports and UUID
+        all_configs = [s._config for s in self._speakers] + [sc]
+        _assign_ports(all_configs, webui_port=self._config.server.http_port)
+        _generate_uuids([sc])
+
+        # Create and start speaker
+        assert self._api_client is not None
+        speaker = Speaker(config=sc, api_client=self._api_client, app_id=self._app_id)
+        started = await speaker.start()
+        if not started:
+            raise ValueError(f"Speaker '{name}' failed to start")
+
+        self._speakers.append(speaker)
+
+        # Update config and persist
+        self._config.speakers.append(sc)
+        self._save_config()
+
+        return speaker.get_status()
+
+    async def _on_edit_speaker(self, speaker_id: str, body: dict) -> dict:
+        """Edit a speaker at runtime (stop, reconfigure, restart)."""
+        idx = None
+        for i, s in enumerate(self._speakers):
+            if slugify_name(s.name) == speaker_id:
+                idx = i
+                break
+        if idx is None:
+            raise KeyError(speaker_id)
+
+        old_speaker = self._speakers[idx]
+        old_config = self._config.speakers[idx]
+
+        quality_raw = body.get("max_quality", old_config.max_quality)
+        if isinstance(quality_raw, str) and quality_raw.lower() == "auto":
+            max_quality = AUTO_QUALITY
+        else:
+            max_quality = int(quality_raw)
+
+        new_config = SpeakerConfig(
+            name=body.get("name", old_config.name).strip(),
+            uuid=old_config.uuid,
+            backend_type=old_config.backend_type,  # Immutable
+            max_quality=max_quality,
+            http_port=old_config.http_port,
+            bind_address=old_config.bind_address,
+            dlna_ip=body.get("dlna_ip", old_config.dlna_ip),
+            dlna_port=int(body.get("dlna_port", old_config.dlna_port)),
+            dlna_fixed_volume=bool(body.get("fixed_volume", old_config.dlna_fixed_volume)),
+            dlna_description_url=body.get("description_url", old_config.dlna_description_url),
+            proxy_port=old_config.proxy_port,
+            audio_device=body.get("audio_device", old_config.audio_device),
+            audio_buffer_size=int(body.get("buffer_size", old_config.audio_buffer_size)),
+        )
+
+        await old_speaker.stop()
+
+        assert self._api_client is not None
+        new_speaker = Speaker(config=new_config, api_client=self._api_client, app_id=self._app_id)
+        started = await new_speaker.start()
+        if not started:
+            await old_speaker.start()
+            raise ValueError(f"Speaker '{new_config.name}' failed to start with new config")
+
+        self._speakers[idx] = new_speaker
+        self._config.speakers[idx] = new_config
+        self._save_config()
+
+        return new_speaker.get_status()
+
+    async def _on_remove_speaker(self, speaker_id: str) -> None:
+        """Remove a speaker at runtime."""
+        idx = None
+        for i, s in enumerate(self._speakers):
+            if slugify_name(s.name) == speaker_id:
+                idx = i
+                break
+        if idx is None:
+            raise KeyError(speaker_id)
+
+        speaker = self._speakers.pop(idx)
+        self._config.speakers.pop(idx)
+
+        await speaker.stop()
+        self._save_config()
+
+    def _save_config(self) -> None:
+        """Persist current config to YAML file."""
+        if self._config.config_path:
+            try:
+                save_config(self._config, self._config.config_path)
+            except Exception as e:
+                logger.error(f"Failed to save config: {e}")
+
+    # ------------------------------------------------------------------
     # Web server
     # ------------------------------------------------------------------
 
@@ -258,6 +394,12 @@ class QobuzProxy:
         self._web_app["version"] = __version__
         self._web_app["on_auth_token"] = self._on_auth_token
         self._web_app["on_logout"] = self._on_logout
+        self._web_app["on_add_speaker"] = self._on_add_speaker
+        self._web_app["on_edit_speaker"] = self._on_edit_speaker
+        self._web_app["on_remove_speaker"] = self._on_remove_speaker
+        self._web_app["local_audio_enabled"] = os.environ.get(
+            "QOBUZPROXY_LOCAL_AUDIO_UI", ""
+        ).lower() in ("true", "1", "yes")
 
         register_routes(self._web_app)
 
