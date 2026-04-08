@@ -25,9 +25,11 @@ def _format_uptime(seconds: float) -> str:
     return f"{minutes}m"
 
 
-async def _handle_index(request: web.Request) -> web.FileResponse:
-    """Serve index.html."""
-    return web.FileResponse(_STATIC_DIR / "index.html")
+async def _handle_index(request: web.Request) -> web.Response:
+    """Serve index.html with version-based cache busting."""
+    html = (_STATIC_DIR / "index.html").read_text()
+    html = html.replace("{{version}}", request.app.get("version", "0"))
+    return web.Response(text=html, content_type="text/html")
 
 
 async def _handle_status(request: web.Request) -> web.Response:
