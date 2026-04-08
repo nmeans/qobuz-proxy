@@ -555,7 +555,9 @@
         html += '</div>';
 
         var defaultName = device ? (device.friendly_name || device.name || "") : "";
-        var defaultUrl = device ? (device.location || device.url || "") : "";
+        var defaultIp = device ? (device.ip || "") : "";
+        var defaultPort = device ? (device.port || 1400) : 1400;
+        var defaultUrl = device ? (device.location || "") : "";
         var defaultDevice = device ? (device.name || "") : "";
 
         html += '<div class="form-group">';
@@ -564,10 +566,17 @@
         html += '</div>';
 
         if (backend === "dlna") {
-            html += '<div class="form-group">';
-            html += '<label>DLNA device description URL</label>';
-            html += '<input type="text" id="new-dlna-url" value="' + escapeHtml(defaultUrl) + '" placeholder="http://192.168.1.x:1400/xml/device_description.xml">';
+            html += '<div class="form-row">';
+            html += '<div class="form-group" style="flex:2;"><label>IP Address</label>';
+            html += '<input type="text" id="new-dlna-ip" value="' + escapeHtml(defaultIp) + '" placeholder="192.168.1.50"></div>';
+            html += '<div class="form-group" style="flex:1;"><label>Port</label>';
+            html += '<input type="text" id="new-dlna-port" value="' + defaultPort + '"></div>';
             html += '</div>';
+            html += '<div class="form-group">';
+            html += '<label>Description URL <span style="color:#666">(optional — auto-discovered if empty)</span></label>';
+            html += '<input type="text" id="new-dlna-url" value="' + escapeHtml(defaultUrl) + '" placeholder="Leave empty for auto-discovery">';
+            html += '</div>';
+            html += '<div class="form-group"><label style="display:inline;"><input type="checkbox" id="new-fixed-vol"> Fixed volume</label></div>';
         } else if (backend === "local") {
             html += '<div class="form-group">';
             html += '<label>Audio device (leave blank for default)</label>';
@@ -605,13 +614,18 @@
         };
 
         if (selectedBackend === "dlna") {
-            var urlEl = document.getElementById("new-dlna-url");
-            var url = urlEl ? urlEl.value.trim() : "";
-            if (!url) {
-                showError("DLNA URL is required.");
+            var ipEl = document.getElementById("new-dlna-ip");
+            var ip = ipEl ? ipEl.value.trim() : "";
+            if (!ip) {
+                showError("IP address is required.");
                 return;
             }
-            payload.dlna_url = url;
+            payload.dlna_ip = ip;
+            payload.dlna_port = parseInt(document.getElementById("new-dlna-port").value) || 1400;
+            var urlEl = document.getElementById("new-dlna-url");
+            payload.description_url = urlEl ? urlEl.value.trim() : "";
+            var fixedVolEl = document.getElementById("new-fixed-vol");
+            payload.fixed_volume = fixedVolEl ? fixedVolEl.checked : false;
         } else if (selectedBackend === "local") {
             var devEl = document.getElementById("new-audio-device");
             payload.audio_device = devEl ? devEl.value.trim() : "";
