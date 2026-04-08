@@ -317,7 +317,9 @@ class QobuzProxy:
 
         self._speakers = started
         names = ", ".join(s.name for s in self._speakers)
+        port = self._config.server.http_port
         logger.info(f"QobuzProxy ready — {len(self._speakers)} speaker(s): {names}")
+        logger.info(f"Web UI: http://localhost:{port}")
 
     async def _stop_speakers(self) -> None:
         """Stop all running speakers."""
