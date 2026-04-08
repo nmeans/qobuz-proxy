@@ -233,6 +233,34 @@ def generate_speaker_uuid(speaker_name: str) -> str:
     return str(uuid.uuid5(_SPEAKER_UUID_NAMESPACE, f"{platform.node()}:{speaker_name}"))
 
 
+def slugify_name(name: str) -> str:
+    """Convert a speaker name to a URL-safe slug."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def speaker_config_to_dict(sc: SpeakerConfig) -> dict:
+    """Convert a SpeakerConfig to a YAML-serializable dict.
+
+    Auto-assigned fields (uuid, http_port, proxy_port) are omitted so the
+    config file stays clean and ports can be re-assigned on next startup.
+    """
+    d: dict = {
+        "name": sc.name,
+        "backend": sc.backend_type,
+        "max_quality": "auto" if sc.max_quality == AUTO_QUALITY else sc.max_quality,
+    }
+    if sc.backend_type == "dlna":
+        d["dlna_ip"] = sc.dlna_ip
+        d["dlna_port"] = sc.dlna_port
+        d["dlna_fixed_volume"] = sc.dlna_fixed_volume
+        if sc.dlna_description_url:
+            d["dlna_description_url"] = sc.dlna_description_url
+    elif sc.backend_type == "local":
+        d["audio_device"] = sc.audio_device
+        d["audio_buffer_size"] = sc.audio_buffer_size
+    return d
+
+
 def _single_speaker_from_config(config: Config) -> SpeakerConfig:
     """Map flat Config fields to a single SpeakerConfig."""
     return SpeakerConfig(
