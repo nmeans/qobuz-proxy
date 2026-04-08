@@ -60,9 +60,11 @@
                 return response.json();
             })
             .then(function (data) {
+                var auth = data.auth || {};
+
                 // Update auth state
-                if (data.authenticated) {
-                    document.getElementById("auth-email").textContent = data.email || "";
+                if (auth.authenticated) {
+                    document.getElementById("auth-email").textContent = auth.email || "User " + auth.user_id;
                     showAuthState("connected");
                 } else {
                     // Only switch to disconnected if we're not in login flow
@@ -73,15 +75,15 @@
                 }
 
                 // Update speakers
-                if (data.authenticated && data.speakers) {
+                if (auth.authenticated && data.speakers) {
                     updateSpeakers(data.speakers);
-                } else if (!data.authenticated) {
+                } else if (!auth.authenticated) {
                     document.getElementById("speakers-list").innerHTML =
                         '<p class="muted">Waiting for authentication...</p>';
                 }
 
                 // Update system info
-                updateSystemInfo(data.system);
+                updateSystemInfo({ version: data.version, uptime: data.uptime });
             })
             .catch(function () {
                 // Silently ignore fetch errors (server may be restarting)
