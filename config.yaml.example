@@ -29,6 +29,14 @@ server:
 logging:
   level: "info"                 # debug, info, warning, error
 
+# --- Web UI ---
+# The web UI at http://localhost:8689 allows adding/editing/removing speakers.
+# Changes are saved back to this config file.
+#
+# To enable local audio device selection in the web UI:
+# (Requires: pip install qobuz-proxy[local])
+#   QOBUZPROXY_LOCAL_AUDIO_UI=true
+#
 # --- Multi-Speaker Configuration ---
 # Use 'speakers' instead of 'device'/'backend'/'server' for multiple speakers.
 # Each speaker appears as a separate device in the Qobuz app.
