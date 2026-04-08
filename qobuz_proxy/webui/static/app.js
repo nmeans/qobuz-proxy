@@ -168,10 +168,10 @@
         html += '<span class="speaker-name" style="font-weight:500;color:#fff;font-size:14px;">' + escapeHtml(s.name) + '</span>';
 
         // Status badge
-        var state = (s.playback_state || "idle").toLowerCase();
+        var state = (s.status || "idle").toLowerCase();
         var badgeClass = "badge-idle";
         var badgeLabel = "Idle";
-        if (!s.connected) {
+        if (state === "disconnected") {
             badgeClass = "badge-disconnected";
             badgeLabel = "Disconnected";
         } else if (state === "playing") {
@@ -205,17 +205,18 @@
     }
 
     function renderSpeakerCard(s) {
-        var state = (s.playback_state || "idle").toLowerCase();
-        var isActive = s.connected && (state === "playing" || state === "paused");
+        var state = (s.status || "idle").toLowerCase();
+        var np = s.now_playing;
+        var isActive = np && (state === "playing" || state === "paused");
 
         var html = '<div class="speaker-card">';
 
-        if (isActive && s.track) {
+        if (isActive) {
             html += '<div class="speaker-card-playing">';
 
             // Album art
-            if (s.track.album_art) {
-                html += '<img class="speaker-album-art" src="' + escapeHtml(s.track.album_art) + '" alt="Album art">';
+            if (np.album_art_url) {
+                html += '<img class="speaker-album-art" src="' + escapeHtml(np.album_art_url) + '" alt="Album art">';
             } else {
                 html += '<div class="speaker-album-art-placeholder">&#9835;</div>';
             }
@@ -223,25 +224,21 @@
             html += '<div class="speaker-info">';
             html += renderSpeakerHeader(s);
 
-            if (s.track.title) {
-                html += '<div class="speaker-track">' + escapeHtml(s.track.title) + '</div>';
+            if (np.title) {
+                html += '<div class="speaker-track">' + escapeHtml(np.title) + '</div>';
             }
             var artistAlbum = [];
-            if (s.track.artist) artistAlbum.push(escapeHtml(s.track.artist));
-            if (s.track.album) artistAlbum.push(escapeHtml(s.track.album));
+            if (np.artist) artistAlbum.push(escapeHtml(np.artist));
+            if (np.album) artistAlbum.push(escapeHtml(np.album));
             if (artistAlbum.length) {
-                html += '<div class="speaker-artist-album">' + artistAlbum.join(' — ') + '</div>';
+                html += '<div class="speaker-artist-album">' + artistAlbum.join(' &mdash; ') + '</div>';
             }
 
             var meta = [];
-            if (s.track.quality) meta.push(qualityLabel(s.track.quality));
-            if (s.track.duration) {
-                var mins = Math.floor(s.track.duration / 60);
-                var secs = s.track.duration % 60;
-                meta.push(mins + ':' + (secs < 10 ? '0' : '') + secs);
-            }
+            if (np.quality) meta.push(escapeHtml(np.quality));
+            if (np.volume !== undefined) meta.push('Vol ' + np.volume + '%');
             if (meta.length) {
-                html += '<div class="speaker-meta">' + meta.join('<span>·</span>') + '</div>';
+                html += '<div class="speaker-meta">' + meta.join(' · ') + '</div>';
             }
 
             html += '</div>'; // speaker-info
@@ -253,10 +250,13 @@
             html += '<div style="flex:1;min-width:0;">';
             html += renderSpeakerHeader(s);
 
+            var cfg = s.config || {};
             var idleParts = [];
-            if (s.dlna_url) idleParts.push(escapeHtml(s.dlna_url));
-            else if (s.device_name) idleParts.push(escapeHtml(s.device_name));
-            if (s.max_quality) idleParts.push(qualityLabel(s.max_quality));
+            if (s.backend === "dlna" && cfg.dlna_ip) {
+                idleParts.push(escapeHtml(cfg.dlna_ip + ':' + (cfg.dlna_port || 1400)));
+            } else if (s.backend === "local" && cfg.audio_device) {
+                idleParts.push(escapeHtml(cfg.audio_device));
+            }
             if (idleParts.length) {
                 html += '<div class="speaker-idle-info">' + idleParts.join(' · ') + '</div>';
             }
