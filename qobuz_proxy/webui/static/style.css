@@ -142,7 +142,8 @@ button:hover {
     margin-bottom: 4px;
 }
 
-.form-group input {
+.form-group input,
+.form-group textarea {
     width: 100%;
     background: #0f0f0f;
     border: 1px solid #333333;
@@ -150,15 +151,18 @@ button:hover {
     padding: 8px 10px;
     color: #e0e0e0;
     font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
-    font-size: 14px;
+    font-size: 13px;
+    resize: vertical;
 }
 
-.form-group input:focus {
+.form-group input:focus,
+.form-group textarea:focus {
     outline: none;
     border-color: #1976d2;
 }
 
-.form-group input::placeholder {
+.form-group input::placeholder,
+.form-group textarea::placeholder {
     color: #555555;
 }
 

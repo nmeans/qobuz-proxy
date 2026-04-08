@@ -92,51 +92,43 @@
         window.open("https://play.qobuz.com/login", "_blank");
         showAuthState("login");
         document.getElementById("login-error").style.display = "none";
-        document.getElementById("user-id").value = "";
-        document.getElementById("auth-token").value = "";
+        document.getElementById("localuser-value").value = "";
     }
 
     function cancelLogin() {
         showAuthState("disconnected");
     }
 
-    function parsePastedValue(raw) {
-        // Accept various paste formats from LocalStorage/DevTools:
-        // - Plain value: "8998208" or "eyJhbGci..."
-        // - JSON object with id: {"id":8998208,"name":"Leonardo",...}
-        // - Braze wrapper: {"v":"g:8998208|e:undefined|c:..."}
+    function parseLocalUser(raw) {
+        // Parse the localuser LocalStorage value.
+        // Expected format: {"id":8998208,"token":"...","email":"...","name":"...",...}
         var s = raw.trim();
         try {
             var obj = JSON.parse(s);
-            if (obj && typeof obj === "object") {
-                // {"id": 8998208, ...} — localuser format
-                if (obj.id !== undefined) return String(obj.id);
-                // {"v": "g:8998208|..."} — ab.storage.userId format
-                if (typeof obj.v === "string" && obj.v.indexOf("g:") === 0) {
-                    return obj.v.split("|")[0].substring(2);
-                }
-                // {"user_auth_token": "..."} or {"token": "..."}
-                if (obj.user_auth_token) return obj.user_auth_token;
-                if (obj.token) return obj.token;
+            if (obj && typeof obj === "object" && obj.id && obj.token) {
+                return { user_id: String(obj.id), user_auth_token: obj.token };
             }
         } catch (e) {
-            // Not JSON, use as-is
+            // Not valid JSON
         }
-        return s;
+        return null;
     }
 
     function submitToken(event) {
         event.preventDefault();
 
-        var userId = parsePastedValue(document.getElementById("user-id").value);
-        var authToken = parsePastedValue(document.getElementById("auth-token").value);
+        var rawValue = document.getElementById("localuser-value").value;
         var errorEl = document.getElementById("login-error");
 
-        if (!userId || !authToken) {
-            errorEl.textContent = "Both fields are required.";
+        var parsed = parseLocalUser(rawValue);
+        if (!parsed) {
+            errorEl.textContent = 'Could not parse localuser value. Make sure you copied the full value of the "localuser" key.';
             errorEl.style.display = "";
             return;
         }
+
+        var userId = parsed.user_id;
+        var authToken = parsed.user_auth_token;
 
         errorEl.style.display = "none";
 

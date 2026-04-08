@@ -30,17 +30,13 @@
                 <li>Log in at <a href="https://play.qobuz.com/login" target="_blank" rel="noopener">play.qobuz.com</a></li>
                 <li>Open DevTools (F12 or Cmd+Option+I) &rarr; <strong>Application</strong> tab</li>
                 <li>Expand <strong>Local Storage</strong> &rarr; click <code>https://play.qobuz.com</code></li>
-                <li>Find <code>localuser</code> &mdash; the <code>id</code> field is your User ID</li>
-                <li>Find your auth token (check <strong>Network</strong> tab &rarr; filter <code>user/login</code> &rarr; Response &rarr; <code>user_auth_token</code>)</li>
+                <li>Click the <code>localuser</code> entry and copy its value</li>
+                <li>Paste it below:</li>
             </ol>
             <form onsubmit="submitToken(event)">
                 <div class="form-group">
-                    <label for="user-id">User ID</label>
-                    <input type="text" id="user-id" name="user_id" required placeholder="e.g. 12345678">
-                </div>
-                <div class="form-group">
-                    <label for="auth-token">Auth Token</label>
-                    <input type="text" id="auth-token" name="user_auth_token" required placeholder="Paste token here">
+                    <label for="localuser-value">localuser value</label>
+                    <textarea id="localuser-value" name="localuser" required rows="3" placeholder='Paste the localuser value here...'></textarea>
                 </div>
                 <div id="login-error" class="error-message" style="display: none;"></div>
                 <div class="button-group">
