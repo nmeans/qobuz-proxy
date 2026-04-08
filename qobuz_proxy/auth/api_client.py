@@ -293,9 +293,13 @@ class QobuzAPIClient:
             session = self._session
             close_session = False
             if session is None:
-                session = aiohttp.ClientSession(
-                    headers={"X-App-Id": self.app_id, "User-Agent": "Mozilla/5.0"}
-                )
+                headers: dict[str, str] = {
+                    "X-App-Id": self.app_id,
+                    "User-Agent": "Mozilla/5.0",
+                }
+                if self.user_auth_token:
+                    headers["X-User-Auth-Token"] = self.user_auth_token
+                session = aiohttp.ClientSession(headers=headers)
                 close_session = True
 
             timeout = aiohttp.ClientTimeout(total=10)
