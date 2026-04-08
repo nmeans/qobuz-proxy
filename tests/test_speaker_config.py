@@ -306,9 +306,9 @@ class TestSpeakerValidation:
         with pytest.raises(ConfigError, match="Proxy port conflicts"):
             _validate_speakers(speakers)
 
-    def test_empty_speakers_rejected(self):
-        with pytest.raises(ConfigError, match="At least one speaker"):
-            _validate_speakers([])
+    def test_empty_speakers_allowed(self):
+        """Empty speakers list is valid — speakers can be added via the web UI."""
+        _validate_speakers([])  # Should not raise
 
     def test_dlna_speaker_missing_ip_rejected(self):
         speakers = [

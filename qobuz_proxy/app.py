@@ -431,6 +431,11 @@ class QobuzProxy:
         """Create and start Speaker instances from config."""
         assert self._api_client is not None
 
+        if not self._config.speakers:
+            port = self._config.server.http_port
+            logger.info(f"No speakers configured — add speakers at http://localhost:{port}")
+            return
+
         speakers = [
             Speaker(
                 config=sc,

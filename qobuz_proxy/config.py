@@ -322,7 +322,7 @@ def _validate_speakers(speakers: list[SpeakerConfig]) -> None:
         ConfigError: If speakers list is empty, has duplicate names, or port conflicts.
     """
     if not speakers:
-        raise ConfigError("At least one speaker must be configured")
+        return  # Empty is valid — speakers can be added at runtime via the web UI
 
     names = [s.name for s in speakers]
     if len(names) != len(set(names)):
@@ -469,7 +469,10 @@ def build_speaker_configs(
         if env_speakers:
             speakers = env_speakers
         else:
-            speakers = [_single_speaker_from_config(config)]
+            # Only create a speaker from flat config if a backend is actually configured
+            has_backend = config.backend.dlna.ip or config.backend.type == "local"
+            if has_backend:
+                speakers = [_single_speaker_from_config(config)]
 
     _assign_ports(speakers, webui_port=config.server.http_port)
     _generate_uuids(speakers)
@@ -715,10 +718,11 @@ def load_config(
     # Build speaker configs
     config.speakers = build_speaker_configs(config, raw_yaml_speakers)
 
-    # Validate only for single-speaker (non-multi) mode
+    # Validate only for single-speaker (non-multi) mode; skip when no speakers
+    # (empty config is valid — speakers can be added via the web UI)
     device_name_env = os.environ.get("QOBUZPROXY_DEVICE_NAME", "")
     is_multi = raw_yaml_speakers is not None or "," in device_name_env
-    if not is_multi:
+    if not is_multi and config.speakers:
         validate_config(config)
 
     return config
