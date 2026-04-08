@@ -582,7 +582,7 @@
             html += '<label>Description URL <span style="color:#666">(optional — auto-discovered if empty)</span></label>';
             html += '<input type="text" id="new-dlna-url" value="' + escapeHtml(defaultUrl) + '" placeholder="Leave empty for auto-discovery">';
             html += '</div>';
-            html += '<div class="form-group"><label style="display:inline;"><input type="checkbox" id="new-fixed-vol"> Fixed volume</label></div>';
+            html += '<div class="form-group"><label><input type="checkbox" id="new-fixed-vol" style="width:auto;display:inline;margin-right:6px;"> Fixed volume</label></div>';
         } else if (backend === "local") {
             html += '<div class="form-group">';
             html += '<label>Audio device (leave blank for default)</label>';
