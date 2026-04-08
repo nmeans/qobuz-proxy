@@ -29,3 +29,13 @@ jobs:
           tags: |
             ghcr.io/leolobato/qobuz-proxy:latest
             ghcr.io/leolobato/qobuz-proxy:${{ github.ref_name }}
+
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
