@@ -34,7 +34,23 @@ async def authed_client():
     app = make_app(
         auth_state={"authenticated": True, "user_id": "12345", "email": "user@example.com"}
     )
-    app["get_speakers"] = lambda: [{"name": "Living Room", "backend": "dlna", "status": "playing"}]
+    app["get_speakers"] = lambda: [
+        {
+            "id": "living-room",
+            "name": "Living Room",
+            "backend": "dlna",
+            "status": "playing",
+            "config": {"dlna_ip": "192.168.1.50", "dlna_port": 1400, "max_quality": 7},
+            "now_playing": {
+                "title": "Test Track",
+                "artist": "Test Artist",
+                "album": "Test Album",
+                "album_art_url": "",
+                "quality": "Hi-Res 96kHz",
+                "volume": 50,
+            },
+        }
+    ]
     async with TestClient(TestServer(app)) as c:
         yield c
 
@@ -59,7 +75,11 @@ async def test_status_authenticated(authed_client: TestClient) -> None:
     assert data["auth"]["user_id"] == "12345"
     assert data["auth"]["email"] == "user@example.com"
     assert len(data["speakers"]) == 1
-    assert data["speakers"][0]["name"] == "Living Room"
+    speaker = data["speakers"][0]
+    assert speaker["id"] == "living-room"
+    assert speaker["name"] == "Living Room"
+    assert speaker["status"] == "playing"
+    assert speaker["now_playing"]["title"] == "Test Track"
 
 
 async def test_auth_token_success(client: TestClient) -> None:

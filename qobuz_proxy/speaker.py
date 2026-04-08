@@ -104,6 +104,54 @@ class Speaker:
         """Human-readable speaker name (used as Qobuz Connect device name)."""
         return self._config.name
 
+    def get_status(self) -> dict:
+        """Return rich status dict for API responses."""
+        from qobuz_proxy.config import slugify_name
+
+        # Determine playback status
+        if not self._is_running:
+            playback_status = "disconnected"
+        elif self._player and self._player.state == PlaybackState.PLAYING:
+            playback_status = "playing"
+        elif self._player and self._player.state == PlaybackState.PAUSED:
+            playback_status = "paused"
+        else:
+            playback_status = "idle"
+
+        # Build now_playing if there's a current track with metadata
+        now_playing = None
+        if self._player and self._player.current_track and playback_status in ("playing", "paused"):
+            track = self._player.current_track
+            meta = track.metadata
+            now_playing = {
+                "title": meta.get("title", ""),
+                "artist": meta.get("artist", ""),
+                "album": meta.get("album", ""),
+                "album_art_url": meta.get("artwork_url", ""),
+                "quality": meta.get("quality_name", ""),
+                "volume": self._player._volume,
+            }
+
+        # Build config section
+        config_dict: dict = {"max_quality": self._effective_quality}
+        if self._config.backend_type == "dlna":
+            config_dict["dlna_ip"] = self._config.dlna_ip
+            config_dict["dlna_port"] = self._config.dlna_port
+            config_dict["description_url"] = self._config.dlna_description_url
+            config_dict["fixed_volume"] = self._config.dlna_fixed_volume
+        elif self._config.backend_type == "local":
+            config_dict["audio_device"] = self._config.audio_device
+            config_dict["buffer_size"] = self._config.audio_buffer_size
+
+        return {
+            "id": slugify_name(self._config.name),
+            "name": self._config.name,
+            "backend": self._config.backend_type,
+            "status": playback_status,
+            "config": config_dict,
+            "now_playing": now_playing,
+        }
+
     def _build_component_config(self) -> Config:
         """
         Synthesize a Config object from this speaker's SpeakerConfig.

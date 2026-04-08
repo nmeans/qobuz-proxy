@@ -254,9 +254,7 @@ class QobuzProxy:
 
         # Expose state for route handlers
         self._web_app["auth_state"] = self._auth_state
-        self._web_app["get_speakers"] = lambda: [
-            {"name": s.name, "status": "running", "connected": True} for s in self._speakers
-        ]
+        self._web_app["get_speakers"] = lambda: [s.get_status() for s in self._speakers]
         self._web_app["version"] = __version__
         self._web_app["on_auth_token"] = self._on_auth_token
         self._web_app["on_logout"] = self._on_logout
