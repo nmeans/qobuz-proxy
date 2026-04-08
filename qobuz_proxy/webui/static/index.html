@@ -63,11 +63,16 @@
         </div>
 
         <!-- Speakers Section -->
-        <div class="card">
-            <h2>Speakers</h2>
+        <div class="card" id="speakers-section">
+            <div class="speakers-header">
+                <h2>Speakers</h2>
+                <button id="add-speaker-btn" onclick="showAddSpeaker()" style="display: none;">+ Add Speaker</button>
+            </div>
             <div id="speakers-list">
                 <p class="muted">Waiting for authentication...</p>
             </div>
+            <div id="add-speaker-panel" style="display: none;"></div>
+            <div id="speaker-error" class="error-message" style="display: none;"></div>
         </div>
 
         <!-- System Section -->
