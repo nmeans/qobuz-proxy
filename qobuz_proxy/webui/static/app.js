@@ -560,7 +560,7 @@
         html += '<span style="font-weight:600;color:#fff;">Configure speaker</span>';
         html += '</div>';
 
-        var defaultName = device ? (device.friendly_name || device.name || "") : "";
+        var defaultName = device && device.friendly_name ? device.friendly_name : "";
         var defaultIp = device ? (device.ip || "") : "";
         var defaultPort = device ? (device.port || 1400) : 1400;
         var defaultUrl = device ? (device.location || "") : "";
