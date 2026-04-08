@@ -100,11 +100,36 @@
         showAuthState("disconnected");
     }
 
+    function parsePastedValue(raw) {
+        // Accept various paste formats from LocalStorage/DevTools:
+        // - Plain value: "8998208" or "eyJhbGci..."
+        // - JSON object with id: {"id":8998208,"name":"Leonardo",...}
+        // - Braze wrapper: {"v":"g:8998208|e:undefined|c:..."}
+        var s = raw.trim();
+        try {
+            var obj = JSON.parse(s);
+            if (obj && typeof obj === "object") {
+                // {"id": 8998208, ...} — localuser format
+                if (obj.id !== undefined) return String(obj.id);
+                // {"v": "g:8998208|..."} — ab.storage.userId format
+                if (typeof obj.v === "string" && obj.v.indexOf("g:") === 0) {
+                    return obj.v.split("|")[0].substring(2);
+                }
+                // {"user_auth_token": "..."} or {"token": "..."}
+                if (obj.user_auth_token) return obj.user_auth_token;
+                if (obj.token) return obj.token;
+            }
+        } catch (e) {
+            // Not JSON, use as-is
+        }
+        return s;
+    }
+
     function submitToken(event) {
         event.preventDefault();
 
-        var userId = document.getElementById("user-id").value.trim();
-        var authToken = document.getElementById("auth-token").value.trim();
+        var userId = parsePastedValue(document.getElementById("user-id").value);
+        var authToken = parsePastedValue(document.getElementById("auth-token").value);
         var errorEl = document.getElementById("login-error");
 
         if (!userId || !authToken) {
