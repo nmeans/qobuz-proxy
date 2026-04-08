@@ -4,7 +4,7 @@ QobuzProxy - Headless Qobuz music player service.
 A Qobuz Connect renderer that streams to DLNA devices.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 from .app import QobuzProxy
 from .config import Config, load_config, ConfigError
