@@ -1,8 +1,8 @@
 """Tests for webui API routes."""
 
-import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -82,45 +82,87 @@ async def test_status_authenticated(authed_client: TestClient) -> None:
     assert speaker["now_playing"]["title"] == "Test Track"
 
 
-async def test_auth_token_success(client: TestClient) -> None:
-    resp = await client.post(
-        "/api/auth/token",
-        json={"user_id": "12345", "user_auth_token": "secret-token"},
+async def test_auth_login_redirects_to_qobuz(client: TestClient) -> None:
+    resp = await client.get(
+        "/auth/login?origin=http://localhost:8689", allow_redirects=False
     )
-    assert resp.status == 200
-    data = await resp.json()
-    assert data["status"] == "ok"
+    assert resp.status == 302
+    location = resp.headers["Location"]
+    assert "qobuz.com/signin/oauth" in location
+    assert "ext_app_id=304027809" in location
+    assert "redirect_url=" in location
+    assert "localhost%3A8689" in location or "localhost:8689" in location
+
+
+async def test_auth_login_missing_origin(client: TestClient) -> None:
+    resp = await client.get("/auth/login")
+    assert resp.status == 400
+
+
+async def test_auth_callback_success(client: TestClient) -> None:
+    mock_creds = {
+        "user_id": "12345",
+        "user_auth_token": "secret-token",
+        "display_name": "Test User",
+        "email": "test@example.com",
+        "avatar": "",
+    }
+    with patch(
+        "qobuz_proxy.webui.routes.exchange_code",
+        new_callable=AsyncMock,
+        return_value=mock_creds,
+    ):
+        resp = await client.get(
+            "/auth/callback?code_autorisation=test-code", allow_redirects=False
+        )
+    assert resp.status == 302
+    assert resp.headers["Location"] == "/"
     client.app["on_auth_token"].assert_awaited_once_with(  # type: ignore[union-attr]
-        "12345", "secret-token", {"email": "", "name": "", "avatar": ""}
+        "12345",
+        "secret-token",
+        {"email": "test@example.com", "name": "Test User", "avatar": ""},
+        validated=True,
     )
 
 
-async def test_auth_token_failure(client: TestClient) -> None:
+async def test_auth_callback_missing_code(client: TestClient) -> None:
+    resp = await client.get("/auth/callback", allow_redirects=False)
+    assert resp.status == 302
+    assert "error=missing_code" in resp.headers["Location"]
+
+
+async def test_auth_callback_exchange_failure(client: TestClient) -> None:
+    with patch(
+        "qobuz_proxy.webui.routes.exchange_code",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("Token exchange failed"),
+    ):
+        resp = await client.get(
+            "/auth/callback?code_autorisation=bad-code", allow_redirects=False
+        )
+    assert resp.status == 302
+    assert "error=exchange_failed" in resp.headers["Location"]
+
+
+async def test_auth_callback_auth_failure(client: TestClient) -> None:
+    mock_creds = {
+        "user_id": "12345",
+        "user_auth_token": "bad-token",
+        "display_name": "",
+        "email": "",
+        "avatar": "",
+    }
     client.app["on_auth_token"] = AsyncMock(return_value=False)  # type: ignore[union-attr]
-    resp = await client.post(
-        "/api/auth/token",
-        json={"user_id": "12345", "user_auth_token": "bad-token"},
-    )
-    assert resp.status == 401
-    data = await resp.json()
-    assert data["error"] == "authentication_failed"
-
-
-async def test_auth_token_missing_fields(client: TestClient) -> None:
-    resp = await client.post("/api/auth/token", json={"user_id": "12345"})
-    assert resp.status == 400
-    data = await resp.json()
-    assert "error" in data
-
-
-async def test_auth_token_missing_user_id(client: TestClient) -> None:
-    resp = await client.post("/api/auth/token", json={"user_auth_token": "token"})
-    assert resp.status == 400
-
-
-async def test_auth_token_empty_body(client: TestClient) -> None:
-    resp = await client.post("/api/auth/token", json={})
-    assert resp.status == 400
+    with patch(
+        "qobuz_proxy.webui.routes.exchange_code",
+        new_callable=AsyncMock,
+        return_value=mock_creds,
+    ):
+        resp = await client.get(
+            "/auth/callback?code_autorisation=test-code", allow_redirects=False
+        )
+    assert resp.status == 302
+    assert "error=auth_failed" in resp.headers["Location"]
 
 
 async def test_auth_logout(client: TestClient) -> None:

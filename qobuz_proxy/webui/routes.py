@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+
+from qobuz_proxy.auth.oauth import build_oauth_url, exchange_code, extract_code
 from qobuz_proxy.webui.speaker_routes import register_speaker_routes
 
 logger = logging.getLogger(__name__)
@@ -45,33 +47,44 @@ async def _handle_status(request: web.Request) -> web.Response:
     return web.json_response(data)
 
 
-async def _handle_auth_token(request: web.Request) -> web.Response:
-    """Accept user_id and user_auth_token, validate via callback."""
+async def _handle_auth_login(request: web.Request) -> web.Response:
+    """Redirect the user to the Qobuz OAuth sign-in page."""
+    origin = request.query.get("origin", "")
+    if not origin:
+        return web.json_response({"error": "missing origin parameter"}, status=400)
+    redirect_url = f"{origin}/auth/callback"
+    oauth_url = build_oauth_url(redirect_url)
+    raise web.HTTPFound(oauth_url)
+
+
+async def _handle_auth_callback(request: web.Request) -> web.Response:
+    """Handle the OAuth redirect from Qobuz, exchange code, and authenticate."""
     try:
-        body = await request.json()
+        code = extract_code(str(request.url))
+    except ValueError:
+        raise web.HTTPFound("/?error=missing_code")
+
+    try:
+        creds = await exchange_code(code)
     except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
+        logger.exception("OAuth code exchange failed")
+        raise web.HTTPFound("/?error=exchange_failed")
 
-    user_id = body.get("user_id")
-    user_auth_token = body.get("user_auth_token")
-
-    if not user_id or not user_auth_token:
-        return web.json_response({"error": "missing_fields"}, status=400)
-
-    # Optional profile fields from localuser paste
     profile = {
-        "email": body.get("email", ""),
-        "name": body.get("name", ""),
-        "avatar": body.get("avatar", ""),
+        "email": creds.get("email", ""),
+        "name": creds.get("display_name", ""),
+        "avatar": creds.get("avatar", ""),
     }
 
     callback = request.app["on_auth_token"]
-    success: bool = await callback(user_id, user_auth_token, profile)
+    success: bool = await callback(
+        creds["user_id"], creds["user_auth_token"], profile, validated=True
+    )
 
-    if success:
-        return web.json_response({"status": "ok"})
-    else:
-        return web.json_response({"error": "authentication_failed"}, status=401)
+    if not success:
+        raise web.HTTPFound("/?error=auth_failed")
+
+    raise web.HTTPFound("/")
 
 
 async def _handle_logout(request: web.Request) -> web.Response:
@@ -85,7 +98,8 @@ def register_routes(app: web.Application) -> None:
     """Register all web UI routes on the given application."""
     app.router.add_get("/", _handle_index)
     app.router.add_get("/api/status", _handle_status)
-    app.router.add_post("/api/auth/token", _handle_auth_token)
+    app.router.add_get("/auth/login", _handle_auth_login)
+    app.router.add_get("/auth/callback", _handle_auth_callback)
     app.router.add_post("/api/auth/logout", _handle_logout)
     register_speaker_routes(app)
     app.router.add_static("/static", _STATIC_DIR)

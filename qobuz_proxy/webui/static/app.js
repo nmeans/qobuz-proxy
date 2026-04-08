@@ -14,14 +14,10 @@
 
     function showAuthState(state) {
         document.getElementById("auth-disconnected").style.display = "none";
-        document.getElementById("auth-login").style.display = "none";
         document.getElementById("auth-connected").style.display = "none";
 
         if (state === "disconnected") {
             document.getElementById("auth-disconnected").style.display = "";
-            document.getElementById("add-speaker-btn").style.display = "none";
-        } else if (state === "login") {
-            document.getElementById("auth-login").style.display = "";
             document.getElementById("add-speaker-btn").style.display = "none";
         } else if (state === "connected") {
             document.getElementById("auth-connected").style.display = "";
@@ -32,78 +28,8 @@
     }
 
     function startLogin() {
-        window.open("https://play.qobuz.com/login", "_blank");
-        showAuthState("login");
-        document.getElementById("login-error").style.display = "none";
-        document.getElementById("localuser-value").value = "";
-    }
-
-    function cancelLogin() {
-        showAuthState("disconnected");
-    }
-
-    function parseLocalUser(raw) {
-        var s = raw.trim();
-        try {
-            var obj = JSON.parse(s);
-            if (obj && typeof obj === "object" && obj.id && obj.token) {
-                return {
-                    user_id: String(obj.id),
-                    user_auth_token: obj.token,
-                    email: obj.email || "",
-                    name: obj.name || "",
-                    avatar: obj.avatar || "",
-                };
-            }
-        } catch (e) {
-            // Not valid JSON
-        }
-        return null;
-    }
-
-    function submitToken(event) {
-        event.preventDefault();
-
-        var rawValue = document.getElementById("localuser-value").value;
-        var errorEl = document.getElementById("login-error");
-
-        var parsed = parseLocalUser(rawValue);
-        if (!parsed) {
-            errorEl.textContent = 'Could not parse localuser value. Make sure you copied the full value of the "localuser" key.';
-            errorEl.style.display = "";
-            return;
-        }
-
-        errorEl.style.display = "none";
-
-        fetch("/api/auth/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                user_id: parsed.user_id,
-                user_auth_token: parsed.user_auth_token,
-                email: parsed.email,
-                name: parsed.name,
-                avatar: parsed.avatar,
-            }),
-        })
-            .then(function (response) {
-                if (!response.ok) {
-                    return response.json().then(function (data) {
-                        throw new Error(data.error || "Authentication failed");
-                    });
-                }
-                return response.json();
-            })
-            .then(function (data) {
-                document.getElementById("auth-email").textContent = data.email || "";
-                showAuthState("connected");
-                fetchStatus();
-            })
-            .catch(function (err) {
-                errorEl.textContent = err.message;
-                errorEl.style.display = "";
-            });
+        var origin = window.location.origin;
+        window.location.href = "/auth/login?origin=" + encodeURIComponent(origin);
     }
 
     function logout() {
@@ -778,10 +704,7 @@
                     }
                     showAuthState("connected");
                 } else {
-                    var loginDiv = document.getElementById("auth-login");
-                    if (loginDiv.style.display === "none") {
-                        showAuthState("disconnected");
-                    }
+                    showAuthState("disconnected");
                 }
 
                 if (auth.authenticated && data.speakers) {
@@ -804,8 +727,6 @@
     // -------------------------------------------------------------------------
 
     window.startLogin = startLogin;
-    window.cancelLogin = cancelLogin;
-    window.submitToken = submitToken;
     window.logout = logout;
     window.showAddSpeaker = showAddSpeaker;
     window.hideAddSpeaker = hideAddSpeaker;
@@ -818,6 +739,24 @@
     window.cancelEdit = cancelEdit;
     window.submitEditSpeaker = submitEditSpeaker;
     window.removeSpeaker = removeSpeaker;
+
+    // Show OAuth error if redirected back with one
+    (function checkOAuthError() {
+        var params = new URLSearchParams(window.location.search);
+        var error = params.get("error");
+        if (error) {
+            var messages = {
+                missing_code: "Login was cancelled or the authorization code was missing.",
+                exchange_failed: "Failed to exchange authorization code. Please try again.",
+                auth_failed: "Authentication failed. Please try again.",
+            };
+            var errorEl = document.getElementById("login-error");
+            errorEl.textContent = messages[error] || "Login failed. Please try again.";
+            errorEl.style.display = "";
+            // Clean up URL
+            window.history.replaceState({}, "", "/");
+        }
+    })();
 
     // Start polling on page load
     fetchStatus();

@@ -199,12 +199,21 @@ class QobuzProxy:
     # ------------------------------------------------------------------
 
     async def _on_auth_token(
-        self, user_id: str, auth_token: str, profile: dict[str, str] | None = None
+        self,
+        user_id: str,
+        auth_token: str,
+        profile: dict[str, str] | None = None,
+        *,
+        validated: bool = False,
     ) -> bool:
         """Called by the web UI when the user submits a token.
 
         Validates credentials, persists them to cache, and starts speakers
         if they are not already running.
+
+        When *validated* is True the token is assumed to have been verified
+        already (e.g. via OAuth code exchange) and the API client is set up
+        without a second validation round-trip.
         """
         if profile is None:
             profile = {}
@@ -218,7 +227,13 @@ class QobuzProxy:
             self._app_id = credentials["app_id"]
             self._app_secret = credentials["app_secret"]
 
-        if not await self._authenticate(user_id, auth_token):
+        if validated:
+            # Token already validated (e.g. from OAuth exchange) — just set up
+            # the API client so it can sign subsequent requests.
+            self._api_client = QobuzAPIClient(self._app_id, self._app_secret)
+            self._api_client.user_auth_token = auth_token
+            self._api_client.user_id = user_id
+        elif not await self._authenticate(user_id, auth_token):
             return False
 
         email = profile.get("email", "")
