@@ -1,21 +1,28 @@
 """Tests for LocalAudioBackend playback (QPROXY-021)."""
 
+import array
 import asyncio
+import random
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
-import numpy as np
 import pytest
 
 from qobuz_proxy.backends.local.backend import LocalAudioBackend
 from qobuz_proxy.backends.types import BackendTrackMetadata, PlaybackState
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Helpers
 # ---------------------------------------------------------------------------
 
-FAKE_AUDIO_44100 = np.random.rand(44100, 2).astype(np.float32)  # 1 second
-FAKE_AUDIO_96000 = np.random.rand(96000, 2).astype(np.float32)  # 1 second
+
+def _make_audio(frames: int, channels: int = 2) -> array.array:
+    return array.array("f", [random.random() for _ in range(frames * channels)])
+
+
+# 1-second test audio
+FAKE_AUDIO_44100 = _make_audio(44100, channels=2)
+FAKE_AUDIO_96000 = _make_audio(96000, channels=2)
 
 
 def _mock_sounddevice():
@@ -34,7 +41,6 @@ def _mock_sounddevice():
 
 
 _SD_PATCH = "qobuz_proxy.backends.local.device._import_sounddevice"
-_SF_PATCH = "qobuz_proxy.backends.local.backend.soundfile"
 
 
 def _make_metadata() -> BackendTrackMetadata:
@@ -83,29 +89,20 @@ class TestPlayStateTransitions:
         states: list[PlaybackState] = []
         backend.on_state_change(lambda s: states.append(s))
 
-        mock_sf = MagicMock()
-        mock_sf.read.return_value = (FAKE_AUDIO_44100.copy(), 44100)
+        async def patched_download(url):
+            return array.array("f", FAKE_AUDIO_44100), 44100, 2
 
-        with (
-            patch("aiohttp.ClientSession", return_value=_mock_aiohttp_session()),
-            patch("qobuz_proxy.backends.local.backend.sf", mock_sf, create=True),
-            patch.dict("sys.modules", {"soundfile": mock_sf}),
-        ):
+        backend._download_and_decode = patched_download
 
-            async def patched_download(url):
-                return FAKE_AUDIO_44100.copy(), 44100
+        # Mock stream methods
+        backend._stream.set_ring_buffer = MagicMock()
+        backend._stream.open = MagicMock()
+        backend._stream.start = MagicMock()
 
-            backend._download_and_decode = patched_download
+        await backend.play("http://example.com/track.flac", _make_metadata())
 
-            # Mock stream methods
-            backend._stream.set_ring_buffer = MagicMock()
-            backend._stream.open = MagicMock()
-            backend._stream.start = MagicMock()
-
-            await backend.play("http://example.com/track.flac", _make_metadata())
-
-            # Let the feeding task start
-            await asyncio.sleep(0.01)
+        # Let the feeding task start
+        await asyncio.sleep(0.01)
 
         assert PlaybackState.LOADING in states
         assert PlaybackState.PLAYING in states
@@ -163,9 +160,8 @@ class TestPauseResume:
     async def test_pause_resume(self) -> None:
         backend = await _create_connected_backend()
 
-        # Start playback with patched download
         async def fake_download(url):
-            return FAKE_AUDIO_44100.copy(), 44100
+            return array.array("f", FAKE_AUDIO_44100), 44100, 2
 
         backend._download_and_decode = fake_download
         backend._stream.set_ring_buffer = MagicMock()
@@ -200,7 +196,7 @@ class TestStop:
 
         async def fake_download(url):
             # Return a lot of audio so feeding loop doesn't finish instantly
-            return np.random.rand(441000, 2).astype(np.float32), 44100
+            return _make_audio(441000, channels=2), 44100, 2
 
         backend._download_and_decode = fake_download
         backend._stream.set_ring_buffer = MagicMock()
@@ -237,10 +233,10 @@ class TestTrackEnd:
         backend.on_track_ended(lambda: ended.append(True))
 
         # Small audio so it finishes quickly
-        small_audio = np.random.rand(100, 2).astype(np.float32)
+        small_audio = _make_audio(100, channels=2)
 
         async def fake_download(url):
-            return small_audio, 44100
+            return small_audio, 44100, 2
 
         backend._download_and_decode = fake_download
         backend._stream.set_ring_buffer = MagicMock()
@@ -289,7 +285,7 @@ class TestSampleRateChange:
 
         # First track at 44100
         async def fake_download_44100(url):
-            return FAKE_AUDIO_44100.copy(), 44100
+            return array.array("f", FAKE_AUDIO_44100), 44100, 2
 
         backend._download_and_decode = fake_download_44100
         await backend.play("http://example.com/track1.flac", _make_metadata())
@@ -298,7 +294,7 @@ class TestSampleRateChange:
 
         # Second track at 96000
         async def fake_download_96000(url):
-            return FAKE_AUDIO_96000.copy(), 96000
+            return array.array("f", FAKE_AUDIO_96000), 96000, 2
 
         backend._download_and_decode = fake_download_96000
         await backend.play("http://example.com/track2.flac", _make_metadata())
@@ -355,8 +351,9 @@ class TestSeek:
     async def test_seek_sets_target(self) -> None:
         backend = await _create_connected_backend()
         backend._sample_rate = 44100
-        backend._audio_data = np.zeros((441000, 2), dtype=np.float32)
+        backend._audio_data = array.array("f", [0.0] * (441000 * 2))
         backend._total_frames = 441000
+        backend._channels = 2
 
         await backend.seek(5000)  # 5 seconds
         assert backend._seek_target == int(5000 / 1000 * 44100)
@@ -428,7 +425,7 @@ class TestConnectDisconnect:
         backend = await _create_connected_backend()
 
         async def fake_download(url):
-            return np.random.rand(441000, 2).astype(np.float32), 44100
+            return _make_audio(441000, channels=2), 44100, 2
 
         backend._download_and_decode = fake_download
         backend._stream.set_ring_buffer = MagicMock()
@@ -461,37 +458,60 @@ class TestDownloadAndDecode:
     async def test_download_and_decode_stereo(self) -> None:
         backend = LocalAudioBackend()
 
-        mock_sf = MagicMock()
-        mock_sf.read.return_value = (FAKE_AUDIO_44100.copy(), 44100)
+        fake_samples = _make_audio(44100, channels=2)
+
+        mock_decoded = MagicMock()
+        mock_decoded.samples = fake_samples.tobytes()
+        mock_decoded.nchannels = 2
+        mock_decoded.sample_rate = 44100
+        mock_decoded.num_frames = 44100
+
+        mock_miniaudio = MagicMock()
+        mock_miniaudio.SampleFormat.FLOAT32 = MagicMock()
+        mock_miniaudio.decode.return_value = mock_decoded
 
         mock_session = _mock_aiohttp_session()
 
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
-            patch.dict("sys.modules", {"soundfile": mock_sf}),
+            patch.dict("sys.modules", {"miniaudio": mock_miniaudio}),
         ):
-            audio, sr = await backend._download_and_decode("http://example.com/track.flac")
+            audio, sr, channels = await backend._download_and_decode(
+                "http://example.com/track.flac"
+            )
 
         assert sr == 44100
-        assert audio.shape == (44100, 2)
-        assert audio.dtype == np.float32
+        assert channels == 2
+        assert len(audio) == 44100 * 2
+        assert audio.typecode == "f"
 
     async def test_download_and_decode_mono(self) -> None:
         backend = LocalAudioBackend()
-        mono_data = np.random.rand(44100).astype(np.float32)  # 1D
 
-        mock_sf = MagicMock()
-        mock_sf.read.return_value = (mono_data, 44100)
+        fake_samples = _make_audio(44100, channels=1)
+
+        mock_decoded = MagicMock()
+        mock_decoded.samples = fake_samples.tobytes()
+        mock_decoded.nchannels = 1
+        mock_decoded.sample_rate = 44100
+        mock_decoded.num_frames = 44100
+
+        mock_miniaudio = MagicMock()
+        mock_miniaudio.SampleFormat.FLOAT32 = MagicMock()
+        mock_miniaudio.decode.return_value = mock_decoded
 
         mock_session = _mock_aiohttp_session()
 
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
-            patch.dict("sys.modules", {"soundfile": mock_sf}),
+            patch.dict("sys.modules", {"miniaudio": mock_miniaudio}),
         ):
-            audio, sr = await backend._download_and_decode("http://example.com/track.flac")
+            audio, sr, channels = await backend._download_and_decode(
+                "http://example.com/track.flac"
+            )
 
-        assert audio.shape == (44100, 1)  # Reshaped to 2D
+        assert channels == 1
+        assert len(audio) == 44100  # 1 channel * 44100 frames
 
     async def test_download_http_error(self) -> None:
         backend = LocalAudioBackend()
@@ -515,7 +535,7 @@ class TestDownloadAndDecode:
 
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
-            patch.dict("sys.modules", {"soundfile": MagicMock()}),
+            patch.dict("sys.modules", {"miniaudio": MagicMock()}),
         ):
             with pytest.raises(aiohttp.ClientResponseError):
                 await backend._download_and_decode("http://example.com/track.flac")
@@ -530,10 +550,10 @@ class TestFeedingLoop:
     async def test_feeding_loop_feeds_all_frames(self) -> None:
         backend = await _create_connected_backend()
 
-        audio = np.random.rand(1000, 2).astype(np.float32)
+        audio = _make_audio(1000, channels=2)
 
         async def fake_download(url):
-            return audio, 44100
+            return audio, 44100, 2
 
         backend._download_and_decode = fake_download
         backend._stream.set_ring_buffer = MagicMock()
@@ -562,10 +582,10 @@ class TestFeedingLoop:
         backend = await _create_connected_backend()
 
         # 10 seconds of audio at 44100
-        audio = np.random.rand(441000, 2).astype(np.float32)
+        audio = _make_audio(441000, channels=2)
 
         async def fake_download(url):
-            return audio, 44100
+            return audio, 44100, 2
 
         backend._download_and_decode = fake_download
         backend._stream.set_ring_buffer = MagicMock()

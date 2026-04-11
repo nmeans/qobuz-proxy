@@ -1,9 +1,9 @@
 """Tests for buffer monitoring (QPROXY-023)."""
 
+import array
 import asyncio
+import random
 from unittest.mock import MagicMock, patch
-
-import numpy as np
 
 from qobuz_proxy.backends.local.backend import LocalAudioBackend
 from qobuz_proxy.backends.types import BackendTrackMetadata, BufferStatus
@@ -68,7 +68,7 @@ class TestGetBufferStatus:
         from qobuz_proxy.backends.local.ring_buffer import RingBuffer
 
         backend._ring_buffer = RingBuffer(1000, channels=2)
-        backend._ring_buffer.write(np.zeros((500, 2), dtype=np.float32))
+        backend._ring_buffer.write(array.array("f", [0.0] * (500 * 2)))
 
         status = await backend.get_buffer_status()
         assert status == BufferStatus.OK
@@ -94,7 +94,7 @@ class TestGetBufferStatus:
         from qobuz_proxy.backends.local.ring_buffer import RingBuffer
 
         backend._ring_buffer = RingBuffer(1000, channels=2)
-        backend._ring_buffer.write(np.zeros((50, 2), dtype=np.float32))  # 5%
+        backend._ring_buffer.write(array.array("f", [0.0] * (50 * 2)))  # 5%
 
         status = await backend.get_buffer_status()
         assert status == BufferStatus.LOW
@@ -107,7 +107,7 @@ class TestGetBufferStatus:
         from qobuz_proxy.backends.local.ring_buffer import RingBuffer
 
         backend._ring_buffer = RingBuffer(1000, channels=2)
-        backend._ring_buffer.write(np.zeros((1000, 2), dtype=np.float32))
+        backend._ring_buffer.write(array.array("f", [0.0] * (1000 * 2)))
 
         status = await backend.get_buffer_status()
         assert status == BufferStatus.FULL
@@ -144,7 +144,7 @@ class TestBufferStatusNotification:
         from qobuz_proxy.backends.local.ring_buffer import RingBuffer
 
         backend._ring_buffer = RingBuffer(1000, channels=2)
-        backend._ring_buffer.write(np.zeros((500, 2), dtype=np.float32))  # 50% = OK
+        backend._ring_buffer.write(array.array("f", [0.0] * (500 * 2)))  # 50% = OK
         backend._last_buffer_status = BufferStatus.OK
 
         backend._check_buffer_status()
@@ -174,10 +174,10 @@ class TestBufferStatusNotification:
         statuses: list[BufferStatus] = []
         backend.on_buffer_status(lambda s: statuses.append(s))
 
-        audio = np.random.rand(1000, 2).astype(np.float32)
+        audio = array.array("f", [random.random() for _ in range(1000 * 2)])
 
         async def fake_download(url):
-            return audio, 44100
+            return audio, 44100, 2
 
         backend._download_and_decode = fake_download
         backend._stream.set_ring_buffer = MagicMock()

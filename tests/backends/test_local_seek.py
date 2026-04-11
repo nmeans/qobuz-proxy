@@ -1,9 +1,9 @@
 """Tests for seek and position tracking (QPROXY-022)."""
 
+import array
 import asyncio
+import random
 from unittest.mock import MagicMock, patch
-
-import numpy as np
 
 from qobuz_proxy.backends.local.backend import LocalAudioBackend
 from qobuz_proxy.backends.types import BackendTrackMetadata, PlaybackState
@@ -53,10 +53,10 @@ async def _start_playback(
     sample_rate: int = 44100,
 ) -> None:
     """Start playback with fake audio data."""
-    audio = np.random.rand(total_frames, 2).astype(np.float32)
+    audio = array.array("f", [random.random() for _ in range(total_frames * 2)])
 
     async def fake_download(url):
-        return audio, sample_rate
+        return audio, sample_rate, 2
 
     backend._download_and_decode = fake_download
     backend._stream.set_ring_buffer = MagicMock()
