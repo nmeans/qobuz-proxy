@@ -1,20 +1,20 @@
 """
 Thread-safe ring buffer for audio samples.
 
-Stores interleaved float32 audio samples in a circular numpy array.
+Stores interleaved float32 audio samples in a flat array.array buffer.
 Used by the PortAudio audio callback to read samples for output.
 """
 
+import array
 import threading
-
-import numpy as np
 
 
 class RingBuffer:
     """
     Thread-safe circular buffer for audio samples.
 
-    Stores float32 samples in a numpy array with wrap-around handling.
+    Stores flat interleaved float32 samples (frames * channels elements)
+    with wrap-around handling.
     """
 
     def __init__(self, capacity_frames: int, channels: int = 2):
@@ -27,64 +27,75 @@ class RingBuffer:
         """
         self._capacity = capacity_frames
         self._channels = channels
-        self._buffer = np.zeros((capacity_frames, channels), dtype=np.float32)
-        self._write_pos = 0
-        self._read_pos = 0
-        self._available = 0
+        self._buffer: array.array = array.array("f")
+        self._buffer.frombytes(bytes(capacity_frames * channels * 4))
+        self._write_pos = 0  # in frames
+        self._read_pos = 0  # in frames
+        self._available = 0  # in frames
         self._lock = threading.Lock()
 
-    def write(self, data: np.ndarray) -> int:
+    def write(self, data: array.array) -> int:
         """
         Write audio frames to the buffer.
 
         Args:
-            data: numpy array of shape (frames, channels), dtype float32
+            data: flat array.array('f') of interleaved float32 samples
 
         Returns:
             Number of frames actually written (may be less if buffer full)
         """
         with self._lock:
-            frames = min(len(data), self._capacity - self._available)
+            ch = self._channels
+            frames = min(len(data) // ch, self._capacity - self._available)
             if frames == 0:
                 return 0
 
-            # Handle wrap-around
+            mv_buf = memoryview(self._buffer)
+            mv_data = memoryview(data)
             end_pos = self._write_pos + frames
+
             if end_pos <= self._capacity:
-                self._buffer[self._write_pos : end_pos] = data[:frames]
+                mv_buf[self._write_pos * ch : end_pos * ch] = mv_data[: frames * ch]
             else:
                 first_chunk = self._capacity - self._write_pos
-                self._buffer[self._write_pos :] = data[:first_chunk]
-                self._buffer[: frames - first_chunk] = data[first_chunk:frames]
+                mv_buf[self._write_pos * ch : self._capacity * ch] = mv_data[: first_chunk * ch]
+                second_chunk = frames - first_chunk
+                mv_buf[: second_chunk * ch] = mv_data[first_chunk * ch : frames * ch]
 
             self._write_pos = (self._write_pos + frames) % self._capacity
             self._available += frames
             return frames
 
-    def read(self, frames: int) -> np.ndarray:
+    def read(self, frames: int) -> array.array:
         """
         Read audio frames from the buffer.
 
-        Returns exactly `frames` samples. Zero-pads if buffer underrun.
+        Returns exactly `frames` samples worth of data. Zero-pads if buffer underrun.
 
         Args:
             frames: Number of frames to read
 
         Returns:
-            numpy array of shape (frames, channels)
+            flat array.array('f') of interleaved float32 samples, length = frames * channels
         """
         with self._lock:
-            output = np.zeros((frames, self._channels), dtype=np.float32)
+            ch = self._channels
+            output: array.array = array.array("f")
+            output.frombytes(bytes(frames * ch * 4))
             actual = min(frames, self._available)
 
             if actual > 0:
+                mv_buf = memoryview(self._buffer)
+                mv_out = memoryview(output)
                 end_pos = self._read_pos + actual
+
                 if end_pos <= self._capacity:
-                    output[:actual] = self._buffer[self._read_pos : end_pos]
+                    mv_out[: actual * ch] = mv_buf[self._read_pos * ch : end_pos * ch]
                 else:
                     first_chunk = self._capacity - self._read_pos
-                    output[:first_chunk] = self._buffer[self._read_pos :]
-                    output[first_chunk:actual] = self._buffer[: actual - first_chunk]
+                    mv_out[: first_chunk * ch] = mv_buf[self._read_pos * ch : self._capacity * ch]
+                    second_chunk = actual - first_chunk
+                    mv_out[first_chunk * ch : actual * ch] = mv_buf[: second_chunk * ch]
 
                 self._read_pos = (self._read_pos + actual) % self._capacity
                 self._available -= actual

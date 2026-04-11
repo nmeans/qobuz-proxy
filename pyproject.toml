@@ -50,8 +50,7 @@ dev = [
 ]
 local = [
     "sounddevice>=0.4.6",
-    "numpy>=1.24.0",
-    "soundfile>=0.12.1",
+    "miniaudio>=1.2",
 ]
 
 [project.scripts]

@@ -5,10 +5,10 @@ Manages a sounddevice OutputStream that reads from a RingBuffer
 and outputs to a PortAudio device.
 """
 
+import array
 import logging
 import threading
-
-import numpy as np
+from typing import Any
 
 from .ring_buffer import RingBuffer
 
@@ -66,7 +66,7 @@ class AudioOutputStream:
             callback=self._audio_callback,
         )
         logger.debug(
-            f"Audio stream opened: {sample_rate}Hz, {channels}ch, " f"blocksize={self._blocksize}"
+            f"Audio stream opened: {sample_rate}Hz, {channels}ch, blocksize={self._blocksize}"
         )
 
     def start(self) -> None:
@@ -120,17 +120,22 @@ class AudioOutputStream:
         """Check if stream is open."""
         return self._stream is not None
 
-    def _audio_callback(self, outdata: np.ndarray, frames: int, time_info, status) -> None:
+    def _audio_callback(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
         """
         PortAudio callback — called from audio thread.
 
         Reads from ring buffer, applies volume, outputs silence when paused.
+        outdata is a sounddevice-provided C-contiguous float32 buffer (frames, channels).
         """
         if status:
             logger.warning(f"Audio callback status: {status}")
 
+        # Cast to a flat byte view so we can write without importing numpy
+        n_bytes = frames * self._channels * 4  # 4 bytes per float32 sample
+        mv_out = memoryview(outdata).cast("B")
+
         if self._paused:
-            outdata[:] = 0
+            mv_out[:] = bytes(n_bytes)
             return
 
         data = self._ring_buffer.read(frames)
@@ -141,8 +146,10 @@ class AudioOutputStream:
             if self._underrun_count % 10 == 1:
                 logger.warning(f"Audio buffer underrun (count: {self._underrun_count})")
 
-        # Apply volume
+        # Apply volume and write to output buffer
         if self._volume < 1.0:
-            outdata[:] = data * self._volume
+            v = self._volume
+            scaled = array.array("f", (x * v for x in data))
+            mv_out[:] = scaled.tobytes()
         else:
-            outdata[:] = data
+            mv_out[:] = data.tobytes()

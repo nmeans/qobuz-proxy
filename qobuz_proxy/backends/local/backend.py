@@ -5,13 +5,12 @@ Downloads FLAC audio from Qobuz, decodes to float32 samples,
 and plays through the local audio device via PortAudio.
 """
 
+import array
 import asyncio
-import io
 import logging
 from typing import Optional
 
 import aiohttp
-import numpy as np
 
 from qobuz_proxy.backends.base import AudioBackend
 from qobuz_proxy.backends.types import (
@@ -50,11 +49,12 @@ class LocalAudioBackend(AudioBackend):
         self._stream: Optional[AudioOutputStream] = None
 
         # Playback state
-        self._audio_data: Optional[np.ndarray] = None
+        self._audio_data: Optional[array.array] = None  # flat interleaved float32
+        self._channels: int = 2
         self._sample_rate: int = 0
         self._frames_fed: int = 0
         self._total_frames: int = 0
-        self._feeding_task: Optional[asyncio.Task] = None
+        self._feeding_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
 
         # Seek support
         self._seek_target: Optional[int] = None
@@ -69,16 +69,16 @@ class LocalAudioBackend(AudioBackend):
         self._notify_state_change(PlaybackState.LOADING)
 
         try:
-            audio_data, sample_rate = await self._download_and_decode(url)
+            audio_data, sample_rate, channels = await self._download_and_decode(url)
             self._audio_data = audio_data
             self._sample_rate = sample_rate
-            self._total_frames = len(audio_data)
+            self._channels = channels
+            self._total_frames = len(audio_data) // channels
             self._frames_fed = 0
             self._seek_target = None
 
             # Create ring buffer for this track's sample rate
             buffer_frames = int(sample_rate * BUFFER_SECONDS)
-            channels = audio_data.shape[1] if audio_data.ndim > 1 else 1
             self._ring_buffer = RingBuffer(buffer_frames, channels)
 
             # Update stream's ring buffer and open/reconfigure
@@ -100,9 +100,14 @@ class LocalAudioBackend(AudioBackend):
             self._notify_state_change(PlaybackState.ERROR)
             self._notify_playback_error(str(e))
 
-    async def _download_and_decode(self, url: str) -> tuple[np.ndarray, int]:
-        """Download audio file and decode to float32 numpy array."""
-        import soundfile as sf
+    async def _download_and_decode(self, url: str) -> tuple[array.array, int, int]:
+        """Download audio file and decode to flat float32 array.
+
+        Returns:
+            Tuple of (samples, sample_rate, channels) where samples is a flat
+            array.array('f') of interleaved float32 values.
+        """
+        import miniaudio
 
         logger.debug("Downloading audio from URL...")
         async with aiohttp.ClientSession() as session:
@@ -111,16 +116,24 @@ class LocalAudioBackend(AudioBackend):
                 data = await response.read()
 
         logger.debug(f"Downloaded {len(data)} bytes, decoding...")
-        audio_data, sample_rate = sf.read(io.BytesIO(data), dtype="float32")
+        decoded = miniaudio.decode(
+            data,
+            output_format=miniaudio.SampleFormat.FLOAT32,
+            nchannels=0,
+            sample_rate=0,
+        )
 
-        # Ensure 2D array (frames, channels)
-        if audio_data.ndim == 1:
-            audio_data = audio_data.reshape(-1, 1)
+        audio_data: array.array = array.array("f")
+        # decoded.samples may be bytes, bytearray, or memoryview
+        audio_data.frombytes(bytes(decoded.samples))
+
+        channels: int = decoded.nchannels
+        sample_rate: int = decoded.sample_rate
 
         logger.debug(
-            f"Decoded: {len(audio_data)} frames, {audio_data.shape[1]}ch, " f"{sample_rate}Hz"
+            f"Decoded: {decoded.num_frames} frames, {channels}ch, {sample_rate}Hz"
         )
-        return audio_data, sample_rate
+        return audio_data, sample_rate, channels
 
     async def _feeding_loop(self) -> None:
         """Feed decoded audio to ring buffer in chunks."""
@@ -147,7 +160,9 @@ class LocalAudioBackend(AudioBackend):
 
                 # Feed next chunk
                 end = min(self._frames_fed + CHUNK_SIZE, self._total_frames)
-                chunk = self._audio_data[self._frames_fed : end]
+                start_sample = self._frames_fed * self._channels
+                end_sample = end * self._channels
+                chunk = self._audio_data[start_sample:end_sample]
                 written = self._ring_buffer.write(chunk)
                 self._frames_fed += written
 
