@@ -228,20 +228,36 @@ class QobuzProxy:
             self._app_secret = credentials["app_secret"]
 
         if validated:
-            # OAuth tokens are scoped to the Qobuz desktop app_id — use those
-            # credentials for signing so REST API calls authenticate correctly.
-            # Pass scraped web-player credentials as session_app_* so that
-            # session/start (which only works with web-player app IDs) succeeds.
-            from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_PRIVATE_KEY
+            # The OAuth detm_ token is scoped to the OAuth desktop app_id.
+            # getFileUrl and session/start require the scraped web-player app_id.
+            # Exchange the OAuth token for a web-player-scoped token by calling
+            # user/login with the scraped credentials — this returns a token
+            # accepted by the scraped app's signing identity.
+            if self._app_id and self._app_secret:
+                scraped_client = QobuzAPIClient(self._app_id, self._app_secret)
+                if await scraped_client.login_with_token(user_id=user_id, auth_token=auth_token):
+                    logger.info("Exchanged OAuth token for web-player-scoped token")
+                    self._api_client = scraped_client
+                else:
+                    logger.warning(
+                        "Token exchange with scraped credentials failed — "
+                        "falling back to OAuth credentials (streaming may not work)"
+                    )
+                    from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_PRIVATE_KEY
 
-            self._api_client = QobuzAPIClient(
-                OAUTH_APP_ID,
-                OAUTH_PRIVATE_KEY,
-                session_app_id=self._app_id or None,
-                session_app_secret=self._app_secret or None,
-            )
-            self._api_client.user_auth_token = auth_token
-            self._api_client.user_id = user_id
+                    self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_PRIVATE_KEY)
+                    self._api_client.user_auth_token = auth_token
+                    self._api_client.user_id = user_id
+            else:
+                logger.warning(
+                    "Scraped credentials not available — "
+                    "falling back to OAuth credentials (streaming may not work)"
+                )
+                from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_PRIVATE_KEY
+
+                self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_PRIVATE_KEY)
+                self._api_client.user_auth_token = auth_token
+                self._api_client.user_id = user_id
         elif not await self._authenticate(user_id, auth_token):
             return False
 
