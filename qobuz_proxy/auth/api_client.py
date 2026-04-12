@@ -182,19 +182,25 @@ class QobuzAPIClient:
 
         try:
             request_ts = f"{time.time():.6f}"
+            # getFileUrl requires a valid signature from a web-player app_id.
+            # When the user authenticated via OAuth, self.app_id is the desktop
+            # app ID (304027809) whose signing secret is not accepted for streaming
+            # endpoints. Use the scraped web-player credentials (_session_app_*)
+            # for signing instead; the user token is cross-app so it works with any
+            # signing identity.
+            sign_app_id = self._session_app_id
+            sign_secret = self._session_app_secret
             sign_params = {
-                "app_id": self.app_id,
+                "app_id": sign_app_id,
                 "format_id": str(quality),
                 "intent": "stream",
                 "track_id": track_id,
             }
 
-            # Build signature — app_id must be included (sorted alphabetically with
-            # other params), consistent with how _request_signed works for track/get.
             sig_string = "trackgetFileUrl"
             for key in sorted(sign_params.keys()):
                 sig_string += key + str(sign_params[key])
-            sig_string += request_ts + self.app_secret
+            sig_string += request_ts + sign_secret
             signature = hashlib.md5(sig_string.encode()).hexdigest()
 
             params = {
@@ -207,7 +213,7 @@ class QobuzAPIClient:
             headers = {
                 "Referer": "https://play.qobuz.com/",
                 "Origin": "https://play.qobuz.com",
-                "X-App-Id": self.app_id,
+                "X-App-Id": sign_app_id,
             }
             if self.user_auth_token:
                 headers["X-User-Auth-Token"] = self.user_auth_token
