@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 # Qobuz desktop app credentials (public, used by all OAuth clients)
 OAUTH_APP_ID = "304027809"
-OAUTH_PRIVATE_KEY = "6lz8C03UDIC7"
+OAUTH_PRIVATE_KEY = "6lz8C03UDIC7"  # OAuth code exchange key only
+OAUTH_APP_SECRET = "2a938b87c2ee98337e60f0b5453a65a7"  # API request signing secret
 QOBUZ_API_BASE = "https://www.qobuz.com/api.json/0.2"
 QOBUZ_OAUTH_URL = "https://www.qobuz.com/signin/oauth"
 

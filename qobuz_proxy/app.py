@@ -232,9 +232,9 @@ class QobuzProxy:
             # same app_id + OAUTH_PRIVATE_KEY as the signing identity for ALL
             # requests (including getFileUrl) so the token, app_id, and
             # signature all match.
-            from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_PRIVATE_KEY
+            from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_APP_SECRET
 
-            self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_PRIVATE_KEY)
+            self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_APP_SECRET)
             self._api_client.user_auth_token = auth_token
             self._api_client.user_id = user_id
             logger.info("OAuth signing for all API requests (app_id=304027809)")
