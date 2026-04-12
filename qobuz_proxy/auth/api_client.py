@@ -96,7 +96,7 @@ class QobuzAPIClient:
                 "app_id": self.app_id,
             }
             response = await self._request_signed(
-                "user", "login", params=params, method="POST"
+                "user", "login", params=params, method="POST", body="extra=partner"
             )
 
             if response and "user_auth_token" in response:
