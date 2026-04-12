@@ -59,7 +59,7 @@
             })
             .finally(function () {
                 btn.disabled = false;
-                btn.textContent = "Log in to Qobuz";
+                btn.textContent = "Log in";
             });
     }
 
@@ -757,6 +757,10 @@
     // Global exports
     // -------------------------------------------------------------------------
 
+    window.startLogin = function startLogin() {
+        var origin = window.location.origin;
+        window.location.href = "/auth/login?origin=" + encodeURIComponent(origin);
+    };
     window.submitLogin = submitLogin;
     window.logout = logout;
     window.showAddSpeaker = showAddSpeaker;

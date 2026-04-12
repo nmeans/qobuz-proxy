@@ -16,19 +16,22 @@
                 <span class="status-dot status-error"></span>
                 <span>Not connected</span>
             </div>
-            <p>Enter your Qobuz email and password to connect.</p>
             <div id="login-error" class="error-message" style="display: none;"></div>
-            <form id="login-form" onsubmit="submitLogin(event)">
-                <div class="form-group">
-                    <label for="login-email">Email</label>
-                    <input type="email" id="login-email" name="email" autocomplete="username" required>
-                </div>
-                <div class="form-group">
-                    <label for="login-password">Password</label>
-                    <input type="password" id="login-password" name="password" autocomplete="current-password" required>
-                </div>
-                <button type="submit" id="login-btn">Log in to Qobuz</button>
-            </form>
+            <button id="oauth-btn" onclick="startLogin()">Sign in with Qobuz</button>
+            <details style="margin-top: 12px;">
+                <summary style="cursor: pointer; color: var(--muted);">Sign in with email and password</summary>
+                <form id="login-form" onsubmit="submitLogin(event)" style="margin-top: 12px;">
+                    <div class="form-group">
+                        <label for="login-email">Email</label>
+                        <input type="email" id="login-email" name="email" autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password">Password</label>
+                        <input type="password" id="login-password" name="password" autocomplete="current-password">
+                    </div>
+                    <button type="submit" id="login-btn">Log in</button>
+                </form>
+            </details>
         </div>
 
         <!-- Auth State: Authenticated -->
