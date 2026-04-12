@@ -63,6 +63,48 @@
             });
     }
 
+    function submitToken(event) {
+        event.preventDefault();
+        var userId = document.getElementById("token-userid").value.trim();
+        var token = document.getElementById("token-value").value.trim();
+        var btn = document.getElementById("token-btn");
+        var errorEl = document.getElementById("login-error");
+
+        if (!userId || !token) {
+            errorEl.textContent = "Both User ID and token are required.";
+            errorEl.style.display = "";
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = "Connecting…";
+        errorEl.style.display = "none";
+
+        fetch("/api/auth/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: userId, user_auth_token: token }),
+        })
+            .then(function (resp) {
+                if (resp.ok) {
+                    fetchStatus();
+                } else {
+                    return resp.json().then(function (data) {
+                        errorEl.textContent = data.error || "Connection failed. Check token and try again.";
+                        errorEl.style.display = "";
+                    });
+                }
+            })
+            .catch(function () {
+                errorEl.textContent = "Network error. Please try again.";
+                errorEl.style.display = "";
+            })
+            .finally(function () {
+                btn.disabled = false;
+                btn.textContent = "Connect";
+            });
+    }
+
     function logout() {
         fetch("/api/auth/logout", { method: "POST" })
             .then(function () {
@@ -757,6 +799,7 @@
     // Global exports
     // -------------------------------------------------------------------------
 
+    window.submitToken = submitToken;
     window.startLogin = function startLogin() {
         var origin = window.location.origin;
         window.location.href = "/auth/login?origin=" + encodeURIComponent(origin);

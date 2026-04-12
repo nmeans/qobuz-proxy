@@ -19,17 +19,20 @@
             <div id="login-error" class="error-message" style="display: none;"></div>
             <button id="oauth-btn" onclick="startLogin()">Sign in with Qobuz</button>
             <details style="margin-top: 12px;">
-                <summary style="cursor: pointer; color: var(--muted);">Sign in with email and password</summary>
-                <form id="login-form" onsubmit="submitLogin(event)" style="margin-top: 12px;">
+                <summary style="cursor: pointer; color: var(--muted);">Paste token from web player</summary>
+                <p style="margin: 8px 0 4px; font-size: 0.85em; color: var(--muted);">
+                    Open <a href="https://play.qobuz.com" target="_blank">play.qobuz.com</a>, log in, then open DevTools → Application → Local Storage → https://play.qobuz.com and copy the values for <code>user_auth_token</code> and <code>user_id</code>.
+                </p>
+                <form id="token-form" onsubmit="submitToken(event)" style="margin-top: 8px;">
                     <div class="form-group">
-                        <label for="login-email">Email</label>
-                        <input type="email" id="login-email" name="email" autocomplete="username">
+                        <label for="token-userid">User ID</label>
+                        <input type="text" id="token-userid" name="user_id" placeholder="12345678" autocomplete="off">
                     </div>
                     <div class="form-group">
-                        <label for="login-password">Password</label>
-                        <input type="password" id="login-password" name="password" autocomplete="current-password">
+                        <label for="token-value">User Auth Token</label>
+                        <input type="text" id="token-value" name="user_auth_token" placeholder="paste token here" autocomplete="off">
                     </div>
-                    <button type="submit" id="login-btn">Log in</button>
+                    <button type="submit" id="token-btn">Connect</button>
                 </form>
             </details>
         </div>

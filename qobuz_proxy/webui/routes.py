@@ -107,6 +107,26 @@ async def _handle_email_login(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
+async def _handle_token_login(request: web.Request) -> web.Response:
+    """Authenticate with a user_id + user_auth_token pasted from the web player."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    user_id = (body.get("user_id") or "").strip()
+    token = (body.get("user_auth_token") or "").strip()
+    if not user_id or not token:
+        return web.json_response({"error": "user_id and user_auth_token required"}, status=400)
+
+    callback = request.app["on_auth_token"]
+    success: bool = await callback(user_id, token, validated=False)
+    if not success:
+        return web.json_response({"error": "Token validation failed — check user_id and token"}, status=401)
+
+    return web.json_response({"status": "ok"})
+
+
 async def _handle_logout(request: web.Request) -> web.Response:
     """Clear auth token via callback."""
     callback = request.app["on_logout"]
@@ -119,6 +139,7 @@ def register_routes(app: web.Application) -> None:
     app.router.add_get("/", _handle_index)
     app.router.add_get("/api/status", _handle_status)
     app.router.add_post("/api/auth/login", _handle_email_login)
+    app.router.add_post("/api/auth/token", _handle_token_login)
     app.router.add_get("/auth/login", _handle_auth_login)
     app.router.add_get("/auth/callback", _handle_auth_callback)
     app.router.add_post("/api/auth/logout", _handle_logout)
