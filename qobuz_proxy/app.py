@@ -228,9 +228,11 @@ class QobuzProxy:
             self._app_secret = credentials["app_secret"]
 
         if validated:
-            # Token already validated (e.g. from OAuth exchange) — just set up
-            # the API client so it can sign subsequent requests.
-            self._api_client = QobuzAPIClient(self._app_id, self._app_secret)
+            # OAuth tokens are scoped to the Qobuz desktop app_id — use those
+            # credentials for signing so REST API calls authenticate correctly.
+            from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_PRIVATE_KEY
+
+            self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_PRIVATE_KEY)
             self._api_client.user_auth_token = auth_token
             self._api_client.user_id = user_id
         elif not await self._authenticate(user_id, auth_token):
