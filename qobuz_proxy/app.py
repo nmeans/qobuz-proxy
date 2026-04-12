@@ -281,6 +281,41 @@ class QobuzProxy:
 
         return True
 
+    async def _on_email_login(self, email: str, password: str) -> bool:
+        """Called by the web UI when the user submits email+password credentials.
+
+        Uses scraped web-player credentials for signing so the returned token
+        is accepted by all streaming endpoints.
+        """
+        if not self._app_id:
+            credentials = await auto_fetch_credentials()
+            if not credentials:
+                logger.error("Cannot login — app credentials unavailable")
+                return False
+            self._app_id = credentials["app_id"]
+            self._app_secret = credentials["app_secret"]
+
+        client = QobuzAPIClient(self._app_id, self._app_secret)
+        if not await client.login_with_credentials(email=email, password=password):
+            return False
+
+        user = client.user_id or ""
+        token = client.user_auth_token or ""
+        self._api_client = client
+
+        save_user_token(user_id=user, auth_token=token, email=email)
+
+        self._auth_state["authenticated"] = True
+        self._auth_state["user_id"] = user
+        self._auth_state["email"] = email
+        self._auth_state["name"] = ""
+        self._auth_state["avatar"] = ""
+
+        if not self._speakers:
+            await self._start_speakers()
+
+        return True
+
     async def _on_logout(self) -> None:
         """Called by the web UI when the user requests logout."""
         logger.info("Logout requested — stopping speakers and clearing token")
@@ -433,6 +468,7 @@ class QobuzProxy:
         self._web_app["get_speakers"] = lambda: [s.get_status() for s in self._speakers]
         self._web_app["version"] = __version__
         self._web_app["on_auth_token"] = self._on_auth_token
+        self._web_app["on_email_login"] = self._on_email_login
         self._web_app["on_logout"] = self._on_logout
         self._web_app["on_add_speaker"] = self._on_add_speaker
         self._web_app["on_edit_speaker"] = self._on_edit_speaker

@@ -87,6 +87,26 @@ async def _handle_auth_callback(request: web.Request) -> web.Response:
     raise web.HTTPFound("/")
 
 
+async def _handle_email_login(request: web.Request) -> web.Response:
+    """Authenticate with Qobuz email and password."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    email = (body.get("email") or "").strip()
+    password = body.get("password") or ""
+    if not email or not password:
+        return web.json_response({"error": "email and password required"}, status=400)
+
+    callback = request.app["on_email_login"]
+    success: bool = await callback(email, password)
+    if not success:
+        return web.json_response({"error": "Invalid email or password"}, status=401)
+
+    return web.json_response({"status": "ok"})
+
+
 async def _handle_logout(request: web.Request) -> web.Response:
     """Clear auth token via callback."""
     callback = request.app["on_logout"]
@@ -98,6 +118,7 @@ def register_routes(app: web.Application) -> None:
     """Register all web UI routes on the given application."""
     app.router.add_get("/", _handle_index)
     app.router.add_get("/api/status", _handle_status)
+    app.router.add_post("/api/auth/login", _handle_email_login)
     app.router.add_get("/auth/login", _handle_auth_login)
     app.router.add_get("/auth/callback", _handle_auth_callback)
     app.router.add_post("/api/auth/logout", _handle_logout)

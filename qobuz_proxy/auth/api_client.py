@@ -78,6 +78,39 @@ class QobuzAPIClient:
             await self._session.close()
             self._session = None
 
+    async def login_with_credentials(self, email: str, password: str) -> bool:
+        """
+        Login to Qobuz using email and password.
+
+        Args:
+            email: Qobuz account email
+            password: Qobuz account password
+
+        Returns:
+            True if successful
+        """
+        try:
+            params = {
+                "email": email,
+                "password": password,
+                "app_id": self.app_id,
+            }
+            response = await self._request_signed(
+                "user", "login", params=params, method="POST"
+            )
+
+            if response and "user_auth_token" in response:
+                self.user_auth_token = response["user_auth_token"]
+                user = response.get("user") or {}
+                self.user_id = str(user.get("id", ""))
+                logger.info(f"Logged in as user {self.user_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Login failed: {e}")
+
+        return False
+
     async def login_with_token(self, user_id: str, auth_token: str) -> bool:
         """
         Login to Qobuz using a user auth token.

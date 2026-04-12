@@ -27,9 +27,40 @@
         }
     }
 
-    function startLogin() {
-        var origin = window.location.origin;
-        window.location.href = "/auth/login?origin=" + encodeURIComponent(origin);
+    function submitLogin(event) {
+        event.preventDefault();
+        var email = document.getElementById("login-email").value.trim();
+        var password = document.getElementById("login-password").value;
+        var btn = document.getElementById("login-btn");
+        var errorEl = document.getElementById("login-error");
+
+        btn.disabled = true;
+        btn.textContent = "Logging in…";
+        errorEl.style.display = "none";
+
+        fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: email, password: password }),
+        })
+            .then(function (resp) {
+                if (resp.ok) {
+                    fetchStatus();
+                } else {
+                    return resp.json().then(function (data) {
+                        errorEl.textContent = data.error || "Login failed. Please check your credentials.";
+                        errorEl.style.display = "";
+                    });
+                }
+            })
+            .catch(function () {
+                errorEl.textContent = "Network error. Please try again.";
+                errorEl.style.display = "";
+            })
+            .finally(function () {
+                btn.disabled = false;
+                btn.textContent = "Log in to Qobuz";
+            });
     }
 
     function logout() {
@@ -726,7 +757,7 @@
     // Global exports
     // -------------------------------------------------------------------------
 
-    window.startLogin = startLogin;
+    window.submitLogin = submitLogin;
     window.logout = logout;
     window.showAddSpeaker = showAddSpeaker;
     window.hideAddSpeaker = hideAddSpeaker;
@@ -739,24 +770,6 @@
     window.cancelEdit = cancelEdit;
     window.submitEditSpeaker = submitEditSpeaker;
     window.removeSpeaker = removeSpeaker;
-
-    // Show OAuth error if redirected back with one
-    (function checkOAuthError() {
-        var params = new URLSearchParams(window.location.search);
-        var error = params.get("error");
-        if (error) {
-            var messages = {
-                missing_code: "Login was cancelled or the authorization code was missing.",
-                exchange_failed: "Failed to exchange authorization code. Please try again.",
-                auth_failed: "Authentication failed. Please try again.",
-            };
-            var errorEl = document.getElementById("login-error");
-            errorEl.textContent = messages[error] || "Login failed. Please try again.";
-            errorEl.style.display = "";
-            // Clean up URL
-            window.history.replaceState({}, "", "/");
-        }
-    })();
 
     // Start polling on page load
     fetchStatus();

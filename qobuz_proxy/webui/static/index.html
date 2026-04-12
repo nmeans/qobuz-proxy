@@ -16,9 +16,19 @@
                 <span class="status-dot status-error"></span>
                 <span>Not connected</span>
             </div>
-            <p>You need to log in to your Qobuz account to use qobuz-proxy.</p>
+            <p>Enter your Qobuz email and password to connect.</p>
             <div id="login-error" class="error-message" style="display: none;"></div>
-            <button onclick="startLogin()">Log in to Qobuz</button>
+            <form id="login-form" onsubmit="submitLogin(event)">
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input type="email" id="login-email" name="email" autocomplete="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" name="password" autocomplete="current-password" required>
+                </div>
+                <button type="submit" id="login-btn">Log in to Qobuz</button>
+            </form>
         </div>
 
         <!-- Auth State: Authenticated -->
