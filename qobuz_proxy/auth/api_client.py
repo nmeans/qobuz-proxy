@@ -98,7 +98,8 @@ class QobuzAPIClient:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, data="extra=partner", timeout=timeout) as resp:
                     if resp.status != 200:
-                        logger.debug(f"Login failed: {resp.status}")
+                        body = await resp.text()
+                        logger.debug(f"Login failed: {resp.status} {body[:300]}")
                         return False
                     response = await resp.json()
 
