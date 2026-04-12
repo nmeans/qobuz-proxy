@@ -80,9 +80,14 @@ async def exchange_code(code: str) -> dict[str, str]:
     if isinstance(avatar, dict):
         avatar = avatar.get("url", "") or avatar.get("large", "") or ""
 
+    # Use the session token from the login response — it is valid for signed
+    # REST API calls regardless of which app_id signs subsequent requests.
+    # The raw callback `token` is only valid with the OAuth app_id.
+    session_token = profile_data.get("user_auth_token") or token
+
     return {
         "user_id": user_id,
-        "user_auth_token": token,
+        "user_auth_token": session_token,
         "display_name": user.get("display_name", ""),
         "email": user.get("email", ""),
         "avatar": avatar,
