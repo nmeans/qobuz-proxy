@@ -89,24 +89,41 @@ class QobuzAPIClient:
         Returns:
             True if successful
         """
-        try:
-            params = {
-                "user_id": user_id,
-                "user_auth_token": auth_token,
-                "app_id": self.app_id,
-            }
-            response = await self._request_signed(
-                "user", "login", params=params, method="POST", body="extra=partner"
-            )
+        # First try: token in URL params (normal login flow).
+        # Second try: token in X-User-Auth-Token header only (cross-app exchange —
+        # the server may reject app-scoped tokens in URL params but accept them in
+        # the header for re-authentication with a different app_id).
+        for use_header in (False, True):
+            try:
+                if use_header:
+                    # Put token in header; don't include it in signed URL params.
+                    params: dict[str, Any] = {"user_id": user_id, "app_id": self.app_id}
+                    old_token = self.user_auth_token
+                    self.user_auth_token = auth_token
+                    try:
+                        response = await self._request_signed(
+                            "user", "login", params=params, method="POST", body="extra=partner"
+                        )
+                    finally:
+                        self.user_auth_token = old_token
+                else:
+                    params = {
+                        "user_id": user_id,
+                        "user_auth_token": auth_token,
+                        "app_id": self.app_id,
+                    }
+                    response = await self._request_signed(
+                        "user", "login", params=params, method="POST", body="extra=partner"
+                    )
 
-            if response and "user_auth_token" in response:
-                self.user_auth_token = response["user_auth_token"]
-                self.user_id = user_id
-                logger.info(f"Logged in as user {self.user_id}")
-                return True
+                if response and "user_auth_token" in response:
+                    self.user_auth_token = response["user_auth_token"]
+                    self.user_id = user_id
+                    logger.info(f"Logged in as user {self.user_id}")
+                    return True
 
-        except Exception as e:
-            logger.error(f"Login failed: {e}")
+            except Exception as e:
+                logger.error(f"Login failed: {e}")
 
         return False
 
