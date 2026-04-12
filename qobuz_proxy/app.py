@@ -229,28 +229,15 @@ class QobuzProxy:
 
         if validated:
             # The OAuth token is scoped to OAUTH_APP_ID (304027809). Use that
-            # same app_id + OAUTH_PRIVATE_KEY as the signing identity so the
-            # token, app_id, and signature all match. The scraped web-player
-            # credentials only accept web-player-scoped tokens so they won't
-            # work with an OAuth token regardless.
+            # same app_id + OAUTH_PRIVATE_KEY as the signing identity for ALL
+            # requests (including getFileUrl) so the token, app_id, and
+            # signature all match.
             from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_PRIVATE_KEY
 
-            # Use scraped credentials for session/start and getFileUrl signing
-            # via the session_app_id/session_app_secret kwargs if we have them,
-            # so Hi-Res streaming works. Primary signing stays OAuth for track/get etc.
-            if self._app_id and self._app_secret:
-                self._api_client = QobuzAPIClient(
-                    OAUTH_APP_ID,
-                    OAUTH_PRIVATE_KEY,
-                    session_app_id=self._app_id,
-                    session_app_secret=self._app_secret,
-                )
-                logger.info("OAuth signing with scraped session credentials for streaming")
-            else:
-                self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_PRIVATE_KEY)
-                logger.info("OAuth signing (no scraped session credentials)")
+            self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_PRIVATE_KEY)
             self._api_client.user_auth_token = auth_token
             self._api_client.user_id = user_id
+            logger.info("OAuth signing for all API requests (app_id=304027809)")
         elif not await self._authenticate(user_id, auth_token):
             return False
 
