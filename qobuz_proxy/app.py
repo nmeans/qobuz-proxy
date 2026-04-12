@@ -230,9 +230,16 @@ class QobuzProxy:
         if validated:
             # OAuth tokens are scoped to the Qobuz desktop app_id — use those
             # credentials for signing so REST API calls authenticate correctly.
+            # Pass scraped web-player credentials as session_app_* so that
+            # session/start (which only works with web-player app IDs) succeeds.
             from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_PRIVATE_KEY
 
-            self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_PRIVATE_KEY)
+            self._api_client = QobuzAPIClient(
+                OAUTH_APP_ID,
+                OAUTH_PRIVATE_KEY,
+                session_app_id=self._app_id or None,
+                session_app_secret=self._app_secret or None,
+            )
             self._api_client.user_auth_token = auth_token
             self._api_client.user_id = user_id
         elif not await self._authenticate(user_id, auth_token):

@@ -713,12 +713,17 @@ def load_config(
     config = dict_to_config(merged)
 
     # Remember where to persist config changes (for web UI speaker management).
-    # Default to ./config.yaml so speakers added via the UI get saved even when
-    # no config file existed at startup.
+    # Default to $QOBUZPROXY_DATA_DIR/config.yaml (writable in Docker) or
+    # ./config.yaml so speakers added via the UI get saved even when no config
+    # file existed at startup.
     if config_path:
         config.config_path = config_path
     else:
-        config.config_path = Path("./config.yaml")
+        data_dir = os.environ.get("QOBUZPROXY_DATA_DIR")
+        if data_dir:
+            config.config_path = Path(data_dir) / "config.yaml"
+        else:
+            config.config_path = Path("./config.yaml")
 
     # Build speaker configs
     config.speakers = build_speaker_configs(config, raw_yaml_speakers)

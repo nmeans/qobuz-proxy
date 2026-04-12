@@ -28,16 +28,30 @@ class QobuzAPIClient:
 
     API_BASE = "https://www.qobuz.com/api.json/0.2"
 
-    def __init__(self, app_id: str, app_secret: str):
+    def __init__(
+        self,
+        app_id: str,
+        app_secret: str,
+        *,
+        session_app_id: Optional[str] = None,
+        session_app_secret: Optional[str] = None,
+    ):
         """
         Initialize API client.
 
         Args:
-            app_id: Qobuz application ID
-            app_secret: Qobuz application secret
+            app_id: Qobuz application ID (used for request signing)
+            app_secret: Qobuz application secret (used for request signing)
+            session_app_id: App ID to use for session/start (defaults to app_id).
+                Set this to scraped web-player credentials when using OAuth app
+                credentials as the primary signing identity, because session/start
+                only works with web-player app IDs.
+            session_app_secret: App secret to use for session/start (defaults to app_secret).
         """
         self.app_id = app_id
         self.app_secret = app_secret
+        self._session_app_id = session_app_id or app_id
+        self._session_app_secret = session_app_secret or app_secret
         self.user_auth_token: Optional[str] = None
         self.user_id: Optional[str] = None
         self.x_session_id: Optional[str] = None
@@ -111,11 +125,12 @@ class QobuzAPIClient:
             request_ts = f"{time.time():.6f}"
             params = {"profile": "qbz-1"}
 
-            # Build signature
+            # Build signature using session-specific credentials (may differ from
+            # main signing credentials when using OAuth login with scraped session creds)
             sig_string = "sessionstart"
             for key in sorted(params.keys()):
                 sig_string += key + str(params[key])
-            sig_string += request_ts + self.app_secret
+            sig_string += request_ts + self._session_app_secret
             signature = hashlib.md5(sig_string.encode()).hexdigest()
 
             body = f"profile=qbz-1&request_ts={request_ts}&request_sig={signature}"
@@ -125,7 +140,7 @@ class QobuzAPIClient:
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Referer": "https://play.qobuz.com/",
                 "Origin": "https://play.qobuz.com",
-                "X-App-Id": self.app_id,
+                "X-App-Id": self._session_app_id,
             }
             if self.user_auth_token:
                 headers["X-User-Auth-Token"] = self.user_auth_token
@@ -140,6 +155,10 @@ class QobuzAPIClient:
                             self.x_session_expires_at = response.get("expires_at", 0) * 1000
                             logger.debug("Session started")
                             return True
+                        logger.debug(f"Session start: 200 but no session_id in response")
+                    else:
+                        body = await resp.text()
+                        logger.debug(f"Session start failed: {resp.status} {body[:200]}")
 
         except Exception as e:
             logger.error(f"Failed to start session: {e}")
