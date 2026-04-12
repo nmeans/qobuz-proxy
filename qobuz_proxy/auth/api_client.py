@@ -197,6 +197,7 @@ class QobuzAPIClient:
 
             params = {
                 **sign_params,
+                "app_id": self.app_id,
                 "request_ts": request_ts,
                 "request_sig": signature,
             }
@@ -228,7 +229,8 @@ class QobuzAPIClient:
                             }
                         return None
                     else:
-                        logger.error(f"Failed to get track URL: {resp.status}")
+                        body = await resp.text()
+                        logger.error(f"Failed to get track URL: {resp.status} {body[:300]}")
 
         except Exception as e:
             logger.error(f"Failed to get track URL: {e}")
