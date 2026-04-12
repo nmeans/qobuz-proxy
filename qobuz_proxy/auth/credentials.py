@@ -321,7 +321,9 @@ async def auto_fetch_credentials(use_cache: bool = True) -> Optional[dict[str, s
     if use_cache:
         cached = load_cached_credentials()
         if cached:
-            return cached
+            if await test_secret(cached["app_id"], cached["app_secret"]):
+                return cached
+            logger.info("Cached credentials are stale — re-scraping")
 
     logger.info("Fetching credentials from web player...")
     scraper = CredentialScraper()
