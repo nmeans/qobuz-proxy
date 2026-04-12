@@ -90,14 +90,17 @@ class QobuzAPIClient:
             True if successful
         """
         try:
-            # email and password go in the POST body (not signed URL params)
-            from urllib.parse import quote
-
-            params = {"app_id": self.app_id}
-            body = f"email={quote(email, safe='')}&password={quote(password, safe='')}&extra=partner"
-            response = await self._request_signed(
-                "user", "login", params=params, method="POST", body=body
-            )
+            # Per StreamCore32 reference: login is unsigned — email, password, and
+            # app_id go in URL query params with NO request_ts/request_sig.
+            # POST body is just "extra=partner". No custom headers needed.
+            url = f"{self.API_BASE}/user/login?{urlencode({'email': email, 'password': password, 'app_id': self.app_id})}"
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, data="extra=partner", timeout=timeout) as resp:
+                    if resp.status != 200:
+                        logger.debug(f"Login failed: {resp.status}")
+                        return False
+                    response = await resp.json()
 
             if response and "user_auth_token" in response:
                 self.user_auth_token = response["user_auth_token"]
