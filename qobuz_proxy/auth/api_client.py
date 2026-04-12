@@ -183,12 +183,14 @@ class QobuzAPIClient:
         try:
             request_ts = f"{time.time():.6f}"
             sign_params = {
+                "app_id": self.app_id,
                 "format_id": str(quality),
                 "intent": "stream",
                 "track_id": track_id,
             }
 
-            # Build signature
+            # Build signature — app_id must be included (sorted alphabetically with
+            # other params), consistent with how _request_signed works for track/get.
             sig_string = "trackgetFileUrl"
             for key in sorted(sign_params.keys()):
                 sig_string += key + str(sign_params[key])
@@ -197,7 +199,6 @@ class QobuzAPIClient:
 
             params = {
                 **sign_params,
-                "app_id": self.app_id,
                 "request_ts": request_ts,
                 "request_sig": signature,
             }
