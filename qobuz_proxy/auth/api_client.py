@@ -159,8 +159,7 @@ class QobuzAPIClient:
             'mime_type' keys, or None on failure
         """
         if not await self.start_session():
-            logger.error("Failed to start session")
-            return None
+            logger.debug("Session start failed — proceeding without session ID")
 
         try:
             request_ts = f"{time.time():.6f}"
