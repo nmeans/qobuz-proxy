@@ -92,11 +92,18 @@ class QobuzAPIClient:
         try:
             # Per StreamCore32 reference: login is unsigned — email, password, and
             # app_id go in URL query params with NO request_ts/request_sig.
-            # POST body is just "extra=partner". No custom headers needed.
+            # POST body is just "extra=partner".
             url = f"{self.API_BASE}/user/login?{urlencode({'email': email, 'password': password, 'app_id': self.app_id})}"
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "Mozilla/5.0",
+                "X-App-Id": self.app_id,
+                "Referer": "https://play.qobuz.com/",
+                "Origin": "https://play.qobuz.com",
+            }
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, data="extra=partner", timeout=timeout) as resp:
+                async with session.post(url, data="extra=partner", headers=headers, timeout=timeout) as resp:
                     if resp.status != 200:
                         body = await resp.text()
                         logger.debug(f"Login failed: {resp.status} {body[:300]}")
