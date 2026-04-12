@@ -20,13 +20,22 @@ RUN useradd --create-home --shell /bin/bash qobuzproxy
 # Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy only the package manifest first so the dependency install layer is
+# cached independently of source changes.
 COPY pyproject.toml README.md ./
+
+# Install dependencies (cached unless pyproject.toml changes)
+RUN pip install --no-cache-dir $(python3 -c "
+import tomllib
+with open('pyproject.toml', 'rb') as f:
+    data = tomllib.load(f)
+print(' '.join(data['project']['dependencies']))
+")
+
+# Copy source and install the package itself (no dep re-download)
 COPY qobuz_proxy/ ./qobuz_proxy/
 COPY protos/ ./protos/
-
-# Install package
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 # Create data directory and set ownership
 RUN mkdir -p /data && chown qobuzproxy:qobuzproxy /data
