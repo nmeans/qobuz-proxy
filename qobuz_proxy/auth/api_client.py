@@ -136,14 +136,14 @@ class QobuzAPIClient:
             body = f"profile=qbz-1&request_ts={request_ts}&request_sig={signature}"
             url = f"{self.API_BASE}/session/start"
 
+            # session/start is app-level — do NOT include X-User-Auth-Token.
+            # Including a user token that was issued for a different app_id causes 401.
             headers = {
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Referer": "https://play.qobuz.com/",
                 "Origin": "https://play.qobuz.com",
                 "X-App-Id": self._session_app_id,
             }
-            if self.user_auth_token:
-                headers["X-User-Auth-Token"] = self.user_auth_token
 
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession() as session:
