@@ -90,13 +90,13 @@ class QobuzAPIClient:
             True if successful
         """
         try:
-            params = {
-                "email": email,
-                "password": password,
-                "app_id": self.app_id,
-            }
+            # email and password go in the POST body (not signed URL params)
+            from urllib.parse import quote
+
+            params = {"app_id": self.app_id}
+            body = f"email={quote(email, safe='')}&password={quote(password, safe='')}&extra=partner"
             response = await self._request_signed(
-                "user", "login", params=params, method="POST", body="extra=partner"
+                "user", "login", params=params, method="POST", body=body
             )
 
             if response and "user_auth_token" in response:
