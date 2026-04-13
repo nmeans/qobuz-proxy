@@ -116,11 +116,14 @@ class LocalAudioBackend(AudioBackend):
                 data = await response.read()
 
         logger.debug(f"Downloaded {len(data)} bytes, decoding...")
-        decoded = miniaudio.decode(
+        # Run decode in thread pool — miniaudio.decode() is synchronous and can
+        # block the event loop for several seconds on slow hardware (armv7).
+        decoded = await asyncio.to_thread(
+            miniaudio.decode,
             data,
-            output_format=miniaudio.SampleFormat.FLOAT32,
-            nchannels=0,
-            sample_rate=0,
+            miniaudio.SampleFormat.FLOAT32,
+            0,  # nchannels: preserve source
+            0,  # sample_rate: preserve source
         )
 
         audio_data: array.array = array.array("f")
