@@ -53,6 +53,7 @@ class QobuzAPIClient:
         self._session_app_id = session_app_id or app_id
         self._session_app_secret = session_app_secret or app_secret
         self.user_auth_token: Optional[str] = None
+        self.api_jwt: Optional[str] = None  # Bearer token from jwt_api Connect handshake
         self.user_id: Optional[str] = None
         self.x_session_id: Optional[str] = None
         self.x_session_expires_at: int = 0
@@ -325,6 +326,8 @@ class QobuzAPIClient:
             }
             if self.user_auth_token:
                 headers["X-User-Auth-Token"] = self.user_auth_token
+            elif self.api_jwt:
+                headers["Authorization"] = f"Bearer {self.api_jwt}"
             if self.x_session_id:
                 headers["X-Session-Id"] = self.x_session_id
 
@@ -432,6 +435,8 @@ class QobuzAPIClient:
                 }
                 if self.user_auth_token:
                     headers["X-User-Auth-Token"] = self.user_auth_token
+                elif self.api_jwt:
+                    headers["Authorization"] = f"Bearer {self.api_jwt}"
                 session = aiohttp.ClientSession(headers=headers)
                 close_session = True
 
