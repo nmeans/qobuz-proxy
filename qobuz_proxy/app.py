@@ -228,16 +228,34 @@ class QobuzProxy:
             self._app_secret = credentials["app_secret"]
 
         if validated:
-            # The OAuth token is scoped to OAUTH_APP_ID (304027809). Use that
-            # same app_id + OAUTH_PRIVATE_KEY as the signing identity for ALL
-            # requests (including getFileUrl) so the token, app_id, and
-            # signature all match.
-            from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_APP_SECRET
+            # The OAuth token is app-scoped to OAUTH_APP_ID (304027809).
+            # getFileUrl only accepts signatures from the web-player app, so we
+            # try to exchange the OAuth token for one scoped to the scraped
+            # web-player app_id via an unsigned user/login call.
+            if self._app_id:
+                web_client = QobuzAPIClient(self._app_id, self._app_secret)
+                if await web_client.exchange_token_for_app(user_id, auth_token):
+                    self._api_client = web_client
+                    logger.info(
+                        f"OAuth token exchanged for web-player token "
+                        f"(app_id={self._app_id})"
+                    )
+                else:
+                    logger.warning(
+                        "Token exchange failed — falling back to OAuth app credentials"
+                    )
+                    from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_APP_SECRET
 
-            self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_APP_SECRET)
-            self._api_client.user_auth_token = auth_token
-            self._api_client.user_id = user_id
-            logger.info("OAuth signing for all API requests (app_id=304027809)")
+                    self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_APP_SECRET)
+                    self._api_client.user_auth_token = auth_token
+                    self._api_client.user_id = user_id
+            else:
+                from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_APP_SECRET
+
+                self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_APP_SECRET)
+                self._api_client.user_auth_token = auth_token
+                self._api_client.user_id = user_id
+                logger.info("OAuth signing for all API requests (app_id=304027809)")
         elif not await self._authenticate(user_id, auth_token):
             return False
 

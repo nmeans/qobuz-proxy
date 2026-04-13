@@ -122,6 +122,50 @@ class QobuzAPIClient:
 
         return False
 
+    async def exchange_token_for_app(self, user_id: str, source_token: str) -> bool:
+        """Exchange a token scoped to another app for one scoped to this client's app_id.
+
+        Calls ``user/login`` unsigned with *source_token* in the
+        ``X-User-Auth-Token`` header.  If the server accepts the token it will
+        return a ``user_auth_token`` that is valid for requests signed with
+        *this* client's ``app_id`` / ``app_secret``.
+
+        Returns True and populates ``user_auth_token`` / ``user_id`` on success.
+        """
+        try:
+            headers = {
+                "Content-Type": "text/plain;charset=UTF-8",
+                "User-Agent": "Mozilla/5.0",
+                "X-App-Id": self.app_id,
+                "X-User-Auth-Token": source_token,
+                "Referer": "https://play.qobuz.com/",
+                "Origin": "https://play.qobuz.com",
+            }
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.API_BASE}/user/login",
+                    data="extra=partner",
+                    headers=headers,
+                    timeout=timeout,
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.debug(f"Token exchange failed ({resp.status}): {body[:200]}")
+                        return False
+                    response = await resp.json()
+
+            if response and "user_auth_token" in response:
+                self.user_auth_token = response["user_auth_token"]
+                self.user_id = user_id
+                logger.info(f"Token exchanged for app_id={self.app_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Token exchange failed: {e}")
+
+        return False
+
     async def login_with_token(self, user_id: str, auth_token: str) -> bool:
         """
         Login to Qobuz using a user auth token.
