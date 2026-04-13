@@ -346,6 +346,11 @@ class QobuzPlayer:
         """
         logger.debug(f"Play command, current state: {self._state}")
 
+        # Already loading — the download/setup is in progress; ignore duplicate
+        if self._state == PlaybackState.LOADING:
+            logger.debug("Play command while loading — ignoring duplicate")
+            return True
+
         # Resume from pause
         if self._state == PlaybackState.PAUSED:
             await self.backend.resume()
