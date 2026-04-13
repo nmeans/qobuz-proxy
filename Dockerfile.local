@@ -1,0 +1,30 @@
+  FROM python:3.11-slim
+
+  # System deps
+  # libasound2: ALSA runtime required by PortAudio (and thus sounddevice) on Linux
+  RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl libportaudio2 libasound2 portaudio19-dev gcc g++ python3-dev libffi-dev \
+      && rm -rf /var/lib/apt/lists/*
+
+  # Compile-heavy audio packages first — cached until these change
+  RUN pip install --no-cache-dir sounddevice miniaudio
+
+  RUN useradd --create-home --shell /bin/bash qobuzproxy
+  WORKDIR /app
+
+  # qobuz-proxy Python deps — cached until pyproject.toml changes
+  COPY pyproject.toml README.md ./
+  RUN pip install --no-cache-dir $(python3 -c "import tomllib; data=tomllib.load(open('pyproject.toml','rb')); print(' '.join(data['project']['dependencies']))")
+
+  # Source copy + fast no-deps install — only this layer rebuilds on code changes
+  COPY qobuz_proxy/ ./qobuz_proxy/
+  COPY protos/ ./protos/
+  RUN pip install --no-cache-dir --no-deps .
+
+  RUN mkdir -p /data && chown qobuzproxy:qobuzproxy /data
+  USER qobuzproxy
+  ENV QOBUZPROXY_DATA_DIR=/data
+  EXPOSE 8689 7120
+  HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+      CMD curl -sf http://localhost:${QOBUZPROXY_HTTP_PORT:-8689}/api/status || exit 1
+  CMD ["qobuz-proxy"]
