@@ -57,6 +57,7 @@ class Speaker:
         config: SpeakerConfig,
         api_client: QobuzAPIClient,
         app_id: str,
+        app_secret: str = "",
         web_app: Optional[web.Application] = None,
     ) -> None:
         """
@@ -65,12 +66,14 @@ class Speaker:
         Args:
             config: Per-speaker configuration
             api_client: Authenticated Qobuz API client (shared across speakers)
-            app_id: Qobuz application ID (shared across speakers)
+            app_id: Qobuz application ID (scraped web-player, used for signing)
+            app_secret: Qobuz application secret (scraped web-player, used for signing)
             web_app: Optional shared aiohttp Application for discovery routes
         """
         self._config = config
         self._api_client = api_client
         self._app_id = app_id
+        self._app_secret = app_secret
         self._web_app = web_app
 
         self._is_running: bool = False
@@ -366,7 +369,53 @@ class Speaker:
     def _on_app_connected(self, tokens: ConnectTokens) -> None:
         """Callback invoked by DiscoveryService when the Qobuz app provides tokens."""
         logger.info(f"[{self.name}] Qobuz app connected, setting up WebSocket...")
+        # Extract user auth token from jwt_api and upgrade API client credentials.
+        # The Qobuz app issues a token scoped to the app_id we advertised in
+        # get-connect-info (the scraped web-player app_id = 798273057).  Using
+        # this token with web-player signing makes getFileUrl work.
+        if tokens.api_token and tokens.api_token.jwt and self._app_secret:
+            user_token = self._extract_user_token(tokens.api_token.jwt)
+            if user_token:
+                self._api_client.app_id = self._app_id
+                self._api_client.app_secret = self._app_secret
+                self._api_client._session_app_id = self._app_id
+                self._api_client._session_app_secret = self._app_secret
+                self._api_client.user_auth_token = user_token
+                logger.info(
+                    f"[{self.name}] Upgraded API credentials from jwt_api "
+                    f"(app_id={self._app_id})"
+                )
         asyncio.create_task(self._setup_websocket(tokens))
+
+    @staticmethod
+    def _extract_user_token(jwt: str) -> str:
+        """Extract the user auth token from a JWT or return it as-is.
+
+        Qobuz sends the user's auth token either directly or wrapped in a JWT
+        payload.  If the value looks like a JWT (three dot-separated segments),
+        decode the payload and look for known token fields.  Otherwise treat
+        the value itself as the token.
+        """
+        import base64
+        import json as _json
+
+        parts = jwt.split(".")
+        if len(parts) == 3:
+            try:
+                payload_b64 = parts[1]
+                # Restore padding
+                payload_b64 += "=" * (4 - len(payload_b64) % 4)
+                payload = _json.loads(base64.urlsafe_b64decode(payload_b64))
+                # Try common field names
+                for field in ("token", "user_auth_token", "userAuthToken", "sub", "access_token"):
+                    val = payload.get(field, "")
+                    if val and isinstance(val, str):
+                        logger.debug(f"Extracted user token from JWT field '{field}'")
+                        return val
+            except Exception as exc:
+                logger.debug(f"JWT decode failed: {exc}")
+        # Not a JWT or no known field found — use the value directly
+        return jwt
 
     async def _setup_websocket(self, tokens: ConnectTokens) -> None:
         """Set up (or refresh) the WebSocket connection after receiving tokens."""

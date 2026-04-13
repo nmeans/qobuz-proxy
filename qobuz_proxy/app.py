@@ -362,7 +362,12 @@ class QobuzProxy:
 
         # Create and start speaker
         assert self._api_client is not None
-        speaker = Speaker(config=sc, api_client=self._api_client, app_id=self._app_id)
+        speaker = Speaker(
+            config=sc,
+            api_client=self._api_client,
+            app_id=self._app_id,
+            app_secret=self._app_secret,
+        )
         started = await speaker.start()
         if not started:
             raise ValueError(f"Speaker '{name}' failed to start")
@@ -413,7 +418,12 @@ class QobuzProxy:
         await old_speaker.stop()
 
         assert self._api_client is not None
-        new_speaker = Speaker(config=new_config, api_client=self._api_client, app_id=self._app_id)
+        new_speaker = Speaker(
+            config=new_config,
+            api_client=self._api_client,
+            app_id=self._app_id,
+            app_secret=self._app_secret,
+        )
         started = await new_speaker.start()
         if not started:
             await old_speaker.start()
@@ -512,6 +522,7 @@ class QobuzProxy:
                 config=sc,
                 api_client=self._api_client,
                 app_id=self._app_id,
+                app_secret=self._app_secret,
             )
             for sc in self._config.speakers
         ]
