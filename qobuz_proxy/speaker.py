@@ -378,6 +378,7 @@ class Speaker:
             self._api_client.app_secret = self._app_secret
             self._api_client._session_app_id = self._app_id
             self._api_client._session_app_secret = self._app_secret
+            self._api_client.user_auth_token = None  # Bearer jwt takes precedence
             self._api_client.api_jwt = tokens.api_token.jwt
             logger.info(
                 f"[{self.name}] Upgraded API credentials from jwt_api "
