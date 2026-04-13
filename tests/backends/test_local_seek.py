@@ -3,9 +3,10 @@
 import array
 import asyncio
 import random
-from unittest.mock import MagicMock, patch
+from typing import Generator
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from qobuz_proxy.backends.local.backend import LocalAudioBackend
+from qobuz_proxy.backends.local.backend import CHUNK_SIZE, LocalAudioBackend
 from qobuz_proxy.backends.types import BackendTrackMetadata, PlaybackState
 
 # ---------------------------------------------------------------------------
@@ -40,6 +41,15 @@ def _make_metadata() -> BackendTrackMetadata:
     )
 
 
+def _audio_gen(audio: array.array, channels: int, start_frame: int = 0) -> Generator:
+    total_frames = len(audio) // channels
+    pos = start_frame
+    while pos < total_frames:
+        end = min(pos + CHUNK_SIZE, total_frames)
+        yield audio[pos * channels : end * channels]
+        pos = end
+
+
 async def _create_connected_backend() -> LocalAudioBackend:
     backend = LocalAudioBackend(device="default", buffer_size=2048)
     with patch(_SD_PATCH, return_value=_mock_sounddevice()):
@@ -51,14 +61,14 @@ async def _start_playback(
     backend: LocalAudioBackend,
     total_frames: int = 441000,
     sample_rate: int = 44100,
+    channels: int = 2,
 ) -> None:
-    """Start playback with fake audio data."""
-    audio = array.array("f", [random.random() for _ in range(total_frames * 2)])
+    """Start playback with fake streaming audio."""
+    audio = array.array("f", [random.random() for _ in range(total_frames * channels)])
 
-    async def fake_download(url):
-        return audio, sample_rate, 2
-
-    backend._download_and_decode = fake_download
+    backend._download_to_tempfile = AsyncMock(return_value="/fake/track.flac")  # type: ignore[method-assign]
+    backend._get_audio_info = AsyncMock(return_value=(sample_rate, channels, total_frames))  # type: ignore[method-assign]
+    backend._make_stream = lambda start_frame=0: _audio_gen(audio, channels, start_frame)  # type: ignore[method-assign]
     backend._stream.set_ring_buffer = MagicMock()
     backend._stream.open = MagicMock()
     backend._stream.start = MagicMock()
@@ -80,13 +90,11 @@ class TestPositionBufferLatency:
         backend = await _create_connected_backend()
         await _start_playback(backend, total_frames=441000, sample_rate=44100)
 
-        # Manually set known state for deterministic test
-        backend._frames_fed = 441000  # 10 seconds fed
-        # Ring buffer has some frames in it (not yet played)
+        backend._frames_decoded = 441000  # 10 seconds fed
         buffer_available = backend._ring_buffer.available()
 
         pos = await backend.get_position()
-        expected_raw_ms = 441000 / 44100 * 1000  # 10000ms
+        expected_raw_ms = 441000 / 44100 * 1000
         expected_latency_ms = buffer_available / 44100 * 1000
         expected = int(expected_raw_ms - expected_latency_ms)
 
@@ -101,12 +109,10 @@ class TestPositionBufferLatency:
         await backend.disconnect()
 
     async def test_position_never_negative(self) -> None:
-        """Position should never go below 0 even with large buffer latency."""
         backend = await _create_connected_backend()
         await _start_playback(backend, total_frames=441000, sample_rate=44100)
 
-        # Set frames_fed to very small value (less than what's in the buffer)
-        backend._frames_fed = 10
+        backend._frames_decoded = 10  # less than what's in the buffer
 
         pos = await backend.get_position()
         assert pos >= 0
@@ -115,10 +121,9 @@ class TestPositionBufferLatency:
         await backend.disconnect()
 
     async def test_position_no_buffer(self) -> None:
-        """Position works when ring buffer is None (before play)."""
         backend = await _create_connected_backend()
         backend._sample_rate = 44100
-        backend._frames_fed = 44100
+        backend._frames_decoded = 44100
         backend._ring_buffer = None
 
         pos = await backend.get_position()
@@ -137,13 +142,11 @@ class TestSeekBasic:
         backend = await _create_connected_backend()
         await _start_playback(backend, total_frames=441000, sample_rate=44100)
 
-        # Seek to 5 seconds
         await backend.seek(5000)
         await asyncio.sleep(0.1)
 
-        # frames_fed should be at or past 5s mark
         expected_frame = int(5000 / 1000 * 44100)
-        assert backend._frames_fed >= expected_frame
+        assert backend._frames_decoded >= expected_frame
 
         await backend.stop()
         await backend.disconnect()
@@ -152,17 +155,12 @@ class TestSeekBasic:
         backend = await _create_connected_backend()
         await _start_playback(backend, total_frames=441000, sample_rate=44100)
 
-        # Let it feed for a bit
         await asyncio.sleep(0.1)
-
-        # Seek backward to 1 second
         await backend.seek(1000)
         await asyncio.sleep(0.1)
 
-        # After seek, frames_fed should reflect position near 1s
         expected_frame = int(1000 / 1000 * 44100)
-        # It may have fed more since the seek, but it started from ~44100
-        assert backend._frames_fed >= expected_frame
+        assert backend._frames_decoded >= expected_frame
 
         await backend.stop()
         await backend.disconnect()
@@ -175,10 +173,8 @@ class TestSeekBasic:
         await backend.seek(0)
         await asyncio.sleep(0.1)
 
-        # Should have restarted from beginning, so position should be small
         pos = await backend.get_position()
-        # It may have fed a chunk by now, but position should be reasonable
-        assert pos < 5000  # Less than 5 seconds
+        assert pos < 5000
 
         await backend.stop()
         await backend.disconnect()
@@ -197,13 +193,12 @@ class TestSeekEdgeCases:
 
         await _start_playback(backend, total_frames=441000, sample_rate=44100)
 
-        # Seek beyond 10 seconds
-        await backend.seek(15000)
+        await backend.seek(15000)  # beyond 10 seconds
         await asyncio.sleep(0.05)
 
         assert len(ended) == 1
         assert backend._state == PlaybackState.STOPPED
-        assert backend._frames_fed == 441000
+        assert backend._frames_decoded == 441000
 
         await backend.disconnect()
 
@@ -211,11 +206,9 @@ class TestSeekEdgeCases:
         backend = await _create_connected_backend()
         await _start_playback(backend, total_frames=441000, sample_rate=44100)
 
-        # Seek to negative (should clamp to 0)
         await backend.seek(-5000)
         await asyncio.sleep(0.1)
 
-        # Position should be near beginning
         pos = await backend.get_position()
         assert pos < 5000
 
@@ -224,10 +217,8 @@ class TestSeekEdgeCases:
 
     async def test_seek_no_op_without_audio(self) -> None:
         backend = await _create_connected_backend()
-        # No audio loaded
         await backend.seek(5000)
         assert backend._seek_target is None
-
         await backend.disconnect()
 
     async def test_seek_no_op_without_sample_rate(self) -> None:
@@ -235,7 +226,6 @@ class TestSeekEdgeCases:
         assert backend._sample_rate == 0
         await backend.seek(5000)
         assert backend._seek_target is None
-
         await backend.disconnect()
 
 
@@ -255,7 +245,6 @@ class TestSeekWhilePaused:
         await backend.seek(5000)
         await asyncio.sleep(0.1)
 
-        # State should remain PAUSED
         assert backend._state == PlaybackState.PAUSED
 
         await backend.stop()
@@ -269,9 +258,7 @@ class TestSeekWhilePaused:
         await backend.seek(5000)
         await asyncio.sleep(0.1)
 
-        # Position should reflect the seek target (approx 5 seconds)
         pos = await backend.get_position()
-        # Allow some tolerance since feeding may have advanced a bit
         assert pos >= 4000
 
         await backend.stop()
@@ -298,17 +285,13 @@ class TestPositionUpdates:
         await backend.disconnect()
 
     async def test_position_updates_are_buffer_corrected(self) -> None:
-        """Position updates should account for buffer latency."""
         backend = await _create_connected_backend()
         positions: list[int] = []
         backend.on_position_update(lambda p: positions.append(p))
 
-        # Use a small amount of audio so feeding finishes quickly
         await _start_playback(backend, total_frames=44100, sample_rate=44100)
         await asyncio.sleep(0.1)
 
-        # All 44100 frames (1s) should be fed. The reported positions
-        # should be <= 1000ms (raw) and potentially less due to buffer correction
         for pos in positions:
             assert pos <= 1000
 
@@ -316,7 +299,6 @@ class TestPositionUpdates:
         await backend.disconnect()
 
     async def test_seek_triggers_immediate_position_update(self) -> None:
-        """Seek should notify position immediately, not wait for next chunk."""
         backend = await _create_connected_backend()
         positions: list[int] = []
         backend.on_position_update(lambda p: positions.append(p))
@@ -328,9 +310,7 @@ class TestPositionUpdates:
         await backend.seek(5000)
         await asyncio.sleep(0.05)
 
-        # Should have at least one position update near 5000ms
         assert len(positions) > 0
-        # The first update after seek should be near 5 seconds
         assert any(4000 <= p <= 6000 for p in positions)
 
         await backend.stop()

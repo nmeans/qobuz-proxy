@@ -3,12 +3,13 @@
 import array
 import asyncio
 import random
+from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
 
-from qobuz_proxy.backends.local.backend import LocalAudioBackend
+from qobuz_proxy.backends.local.backend import CHUNK_SIZE, LocalAudioBackend
 from qobuz_proxy.backends.types import BackendTrackMetadata, PlaybackState
 
 # ---------------------------------------------------------------------------
@@ -26,7 +27,6 @@ FAKE_AUDIO_96000 = _make_audio(96000, channels=2)
 
 
 def _mock_sounddevice():
-    """Create a mock sounddevice module."""
     sd = MagicMock()
     sd.query_devices.return_value = [
         {
@@ -53,23 +53,33 @@ def _make_metadata() -> BackendTrackMetadata:
     )
 
 
-def _mock_aiohttp_session(data: bytes = b"fake-flac-data"):
-    """Create a mock aiohttp.ClientSession context manager."""
-    mock_response = AsyncMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.read = AsyncMock(return_value=data)
-    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-    mock_response.__aexit__ = AsyncMock(return_value=False)
+def _audio_gen(audio: array.array, channels: int, start_frame: int = 0) -> Generator:
+    """Yield CHUNK_SIZE-frame chunks from *audio* starting at *start_frame*."""
+    total_frames = len(audio) // channels
+    pos = start_frame
+    while pos < total_frames:
+        end = min(pos + CHUNK_SIZE, total_frames)
+        yield audio[pos * channels : end * channels]
+        pos = end
 
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=mock_response)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    return mock_session
+
+def _setup_streaming_mocks(
+    backend: LocalAudioBackend,
+    audio: array.array,
+    sample_rate: int = 44100,
+    channels: int = 2,
+) -> None:
+    """Patch the three streaming-pipeline methods so tests need no real files."""
+    total_frames = len(audio) // channels
+    backend._download_to_tempfile = AsyncMock(return_value="/fake/track.flac")  # type: ignore[method-assign]
+    backend._get_audio_info = AsyncMock(return_value=(sample_rate, channels, total_frames))  # type: ignore[method-assign]
+    backend._make_stream = lambda start_frame=0: _audio_gen(audio, channels, start_frame)  # type: ignore[method-assign]
+    backend._stream.set_ring_buffer = MagicMock()
+    backend._stream.open = MagicMock()
+    backend._stream.start = MagicMock()
 
 
 async def _create_connected_backend() -> LocalAudioBackend:
-    """Create a backend that's connected with mocked device."""
     backend = LocalAudioBackend(device="default", buffer_size=2048)
     with patch(_SD_PATCH, return_value=_mock_sounddevice()):
         await backend.connect()
@@ -82,26 +92,14 @@ async def _create_connected_backend() -> LocalAudioBackend:
 
 
 class TestPlayStateTransitions:
-    """Test state transitions during play()."""
-
     async def test_play_transitions_loading_then_playing(self) -> None:
         backend = await _create_connected_backend()
         states: list[PlaybackState] = []
         backend.on_state_change(lambda s: states.append(s))
 
-        async def patched_download(url):
-            return array.array("f", FAKE_AUDIO_44100), 44100, 2
-
-        backend._download_and_decode = patched_download
-
-        # Mock stream methods
-        backend._stream.set_ring_buffer = MagicMock()
-        backend._stream.open = MagicMock()
-        backend._stream.start = MagicMock()
+        _setup_streaming_mocks(backend, FAKE_AUDIO_44100)
 
         await backend.play("http://example.com/track.flac", _make_metadata())
-
-        # Let the feeding task start
         await asyncio.sleep(0.01)
 
         assert PlaybackState.LOADING in states
@@ -118,10 +116,9 @@ class TestPlayStateTransitions:
         backend.on_state_change(lambda s: states.append(s))
         backend.on_playback_error(lambda e: errors.append(e))
 
-        async def failing_download(url):
-            raise aiohttp.ClientError("Download failed")
-
-        backend._download_and_decode = failing_download
+        backend._download_to_tempfile = AsyncMock(  # type: ignore[method-assign]
+            side_effect=aiohttp.ClientError("Download failed")
+        )
 
         await backend.play("http://example.com/track.flac", _make_metadata())
 
@@ -137,10 +134,10 @@ class TestPlayStateTransitions:
         errors: list[str] = []
         backend.on_playback_error(lambda e: errors.append(e))
 
-        async def failing_decode(url):
-            raise RuntimeError("Decode error: unsupported format")
-
-        backend._download_and_decode = failing_decode
+        backend._download_to_tempfile = AsyncMock(return_value="/fake/track.flac")  # type: ignore[method-assign]
+        backend._get_audio_info = AsyncMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("Decode error: unsupported format")
+        )
 
         await backend.play("http://example.com/track.flac", _make_metadata())
 
@@ -159,14 +156,7 @@ class TestPlayStateTransitions:
 class TestPauseResume:
     async def test_pause_resume(self) -> None:
         backend = await _create_connected_backend()
-
-        async def fake_download(url):
-            return array.array("f", FAKE_AUDIO_44100), 44100, 2
-
-        backend._download_and_decode = fake_download
-        backend._stream.set_ring_buffer = MagicMock()
-        backend._stream.open = MagicMock()
-        backend._stream.start = MagicMock()
+        _setup_streaming_mocks(backend, FAKE_AUDIO_44100)
         backend._stream.pause = MagicMock()
         backend._stream.resume = MagicMock()
 
@@ -193,15 +183,7 @@ class TestPauseResume:
 class TestStop:
     async def test_stop_during_playback(self) -> None:
         backend = await _create_connected_backend()
-
-        async def fake_download(url):
-            # Return a lot of audio so feeding loop doesn't finish instantly
-            return _make_audio(441000, channels=2), 44100, 2
-
-        backend._download_and_decode = fake_download
-        backend._stream.set_ring_buffer = MagicMock()
-        backend._stream.open = MagicMock()
-        backend._stream.start = MagicMock()
+        _setup_streaming_mocks(backend, _make_audio(441000, channels=2))
         backend._stream.stop = MagicMock()
 
         await backend.play("http://example.com/track.flac", _make_metadata())
@@ -214,8 +196,8 @@ class TestStop:
 
         assert backend._state == PlaybackState.STOPPED
         assert backend._feeding_task is None
-        assert backend._audio_data is None
-        assert backend._frames_fed == 0
+        assert backend._tmp_path is None
+        assert backend._frames_decoded == 0
         backend._stream.stop.assert_called_once()
 
         await backend.disconnect()
@@ -232,31 +214,16 @@ class TestTrackEnd:
         ended = []
         backend.on_track_ended(lambda: ended.append(True))
 
-        # Small audio so it finishes quickly
         small_audio = _make_audio(100, channels=2)
-
-        async def fake_download(url):
-            return small_audio, 44100, 2
-
-        backend._download_and_decode = fake_download
-        backend._stream.set_ring_buffer = MagicMock()
-        backend._stream.open = MagicMock()
-        backend._stream.start = MagicMock()
+        _setup_streaming_mocks(backend, small_audio)
 
         await backend.play("http://example.com/track.flac", _make_metadata())
 
-        # The ring buffer has 10s * 44100 = 441000 frame capacity
-        # With 100 frames, feeding finishes instantly. But draining waits
-        # for ring_buffer.available() == 0. Since nothing reads from
-        # the buffer in tests, we need to manually drain it.
+        # 100 frames fit in the ring buffer instantly; manually drain so the
+        # feeding loop's drain-wait completes.
         await asyncio.sleep(0.05)
-
-        # The feeding loop fed all 100 frames. Now manually drain the buffer
-        # so the drain check passes.
         if backend._ring_buffer:
             backend._ring_buffer.read(backend._ring_buffer.available())
-
-        # Wait for drain check
         await asyncio.sleep(0.2)
 
         assert len(ended) == 1
@@ -273,9 +240,9 @@ class TestTrackEnd:
 class TestSampleRateChange:
     async def test_stream_reopened_on_sample_rate_change(self) -> None:
         backend = await _create_connected_backend()
-        open_calls = []
+        open_calls: list[tuple[int, int]] = []
 
-        def track_open(sample_rate, channels=2):
+        def track_open(sample_rate: int, channels: int = 2) -> None:
             open_calls.append((sample_rate, channels))
 
         backend._stream.set_ring_buffer = MagicMock()
@@ -283,20 +250,14 @@ class TestSampleRateChange:
         backend._stream.start = MagicMock()
         backend._stream.stop = MagicMock()
 
-        # First track at 44100
-        async def fake_download_44100(url):
-            return array.array("f", FAKE_AUDIO_44100), 44100, 2
-
-        backend._download_and_decode = fake_download_44100
+        _setup_streaming_mocks(backend, FAKE_AUDIO_44100, sample_rate=44100)
+        backend._stream.open = track_open  # re-set after _setup_streaming_mocks
         await backend.play("http://example.com/track1.flac", _make_metadata())
         await asyncio.sleep(0.01)
         await backend.stop()
 
-        # Second track at 96000
-        async def fake_download_96000(url):
-            return array.array("f", FAKE_AUDIO_96000), 96000, 2
-
-        backend._download_and_decode = fake_download_96000
+        _setup_streaming_mocks(backend, FAKE_AUDIO_96000, sample_rate=96000)
+        backend._stream.open = track_open
         await backend.play("http://example.com/track2.flac", _make_metadata())
         await asyncio.sleep(0.01)
 
@@ -351,7 +312,7 @@ class TestSeek:
     async def test_seek_sets_target(self) -> None:
         backend = await _create_connected_backend()
         backend._sample_rate = 44100
-        backend._audio_data = array.array("f", [0.0] * (441000 * 2))
+        backend._tmp_path = "/fake/track.flac"
         backend._total_frames = 441000
         backend._channels = 2
 
@@ -363,6 +324,16 @@ class TestSeek:
     async def test_seek_no_op_without_sample_rate(self) -> None:
         backend = await _create_connected_backend()
         assert backend._sample_rate == 0
+
+        await backend.seek(5000)
+        assert backend._seek_target is None
+
+        await backend.disconnect()
+
+    async def test_seek_no_op_without_tmp_file(self) -> None:
+        backend = await _create_connected_backend()
+        backend._sample_rate = 44100
+        # _tmp_path is None by default
 
         await backend.seek(5000)
         assert backend._seek_target is None
@@ -381,13 +352,13 @@ class TestPosition:
         assert await backend.get_position() == 0
         await backend.disconnect()
 
-    async def test_position_reflects_frames_fed(self) -> None:
+    async def test_position_reflects_frames_decoded(self) -> None:
         backend = await _create_connected_backend()
         backend._sample_rate = 44100
-        backend._frames_fed = 44100  # 1 second
+        backend._frames_decoded = 44100  # 1 second
 
         pos = await backend.get_position()
-        assert pos == 1000  # 1000ms
+        assert pos == 1000  # 1000 ms
 
         await backend.disconnect()
 
@@ -412,7 +383,7 @@ class TestConnectDisconnect:
 
     async def test_connect_failure(self) -> None:
         sd = _mock_sounddevice()
-        sd.query_devices.return_value = []  # No devices
+        sd.query_devices.return_value = []
 
         backend = LocalAudioBackend()
         with patch(_SD_PATCH, return_value=sd):
@@ -423,14 +394,7 @@ class TestConnectDisconnect:
 
     async def test_disconnect_stops_playback(self) -> None:
         backend = await _create_connected_backend()
-
-        async def fake_download(url):
-            return _make_audio(441000, channels=2), 44100, 2
-
-        backend._download_and_decode = fake_download
-        backend._stream.set_ring_buffer = MagicMock()
-        backend._stream.open = MagicMock()
-        backend._stream.start = MagicMock()
+        _setup_streaming_mocks(backend, _make_audio(441000, channels=2))
         backend._stream.stop = MagicMock()
         backend._stream.close = MagicMock()
 
@@ -450,79 +414,54 @@ class TestConnectDisconnect:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Download and Decode
+# Tests: Download to temp file
 # ---------------------------------------------------------------------------
 
 
-class TestDownloadAndDecode:
-    async def test_download_and_decode_stereo(self) -> None:
+class TestDownloadToTempfile:
+    async def test_download_streams_to_disk(self) -> None:
+        """_download_to_tempfile writes response chunks to a file."""
+        import os
+
         backend = LocalAudioBackend()
+        fake_data = b"fake-flac-data-" * 100
 
-        fake_samples = _make_audio(44100, channels=2)
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.content.iter_chunked = MagicMock(
+            return_value=_async_iter([fake_data[:512], fake_data[512:]])
+        )
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
 
-        mock_decoded = MagicMock()
-        mock_decoded.samples = fake_samples.tobytes()
-        mock_decoded.nchannels = 2
-        mock_decoded.sample_rate = 44100
-        mock_decoded.num_frames = 44100
+        mock_session = AsyncMock()
+        mock_session.get = MagicMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
 
-        mock_miniaudio = MagicMock()
-        mock_miniaudio.SampleFormat.FLOAT32 = MagicMock()
-        mock_miniaudio.decode.return_value = mock_decoded
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            path = await backend._download_to_tempfile("http://example.com/track.flac")
 
-        mock_session = _mock_aiohttp_session()
+        try:
+            assert os.path.exists(path)
+            assert path.endswith(".flac")
+            with open(path, "rb") as f:
+                written = f.read()
+            assert written == fake_data
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
 
-        with (
-            patch("aiohttp.ClientSession", return_value=mock_session),
-            patch.dict("sys.modules", {"miniaudio": mock_miniaudio}),
-        ):
-            audio, sr, channels = await backend._download_and_decode(
-                "http://example.com/track.flac"
-            )
+    async def test_download_cleans_up_on_error(self) -> None:
+        """Temp file is deleted if download raises."""
+        import os
 
-        assert sr == 44100
-        assert channels == 2
-        assert len(audio) == 44100 * 2
-        assert audio.typecode == "f"
-
-    async def test_download_and_decode_mono(self) -> None:
-        backend = LocalAudioBackend()
-
-        fake_samples = _make_audio(44100, channels=1)
-
-        mock_decoded = MagicMock()
-        mock_decoded.samples = fake_samples.tobytes()
-        mock_decoded.nchannels = 1
-        mock_decoded.sample_rate = 44100
-        mock_decoded.num_frames = 44100
-
-        mock_miniaudio = MagicMock()
-        mock_miniaudio.SampleFormat.FLOAT32 = MagicMock()
-        mock_miniaudio.decode.return_value = mock_decoded
-
-        mock_session = _mock_aiohttp_session()
-
-        with (
-            patch("aiohttp.ClientSession", return_value=mock_session),
-            patch.dict("sys.modules", {"miniaudio": mock_miniaudio}),
-        ):
-            audio, sr, channels = await backend._download_and_decode(
-                "http://example.com/track.flac"
-            )
-
-        assert channels == 1
-        assert len(audio) == 44100  # 1 channel * 44100 frames
-
-    async def test_download_http_error(self) -> None:
         backend = LocalAudioBackend()
 
         mock_response = AsyncMock()
         mock_response.raise_for_status = MagicMock(
             side_effect=aiohttp.ClientResponseError(
-                request_info=MagicMock(),
-                history=(),
-                status=404,
-                message="Not Found",
+                request_info=MagicMock(), history=(), status=404, message="Not Found"
             )
         )
         mock_response.__aenter__ = AsyncMock(return_value=mock_response)
@@ -533,12 +472,26 @@ class TestDownloadAndDecode:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
 
+        created_path = None
+
+        original_mkstemp = __import__("tempfile").mkstemp
+
+        def capturing_mkstemp(*args, **kwargs):
+            nonlocal created_path
+            fd, path = original_mkstemp(*args, **kwargs)
+            created_path = path
+            return fd, path
+
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
-            patch.dict("sys.modules", {"miniaudio": MagicMock()}),
+            patch("tempfile.mkstemp", side_effect=capturing_mkstemp),
         ):
             with pytest.raises(aiohttp.ClientResponseError):
-                await backend._download_and_decode("http://example.com/track.flac")
+                await backend._download_to_tempfile("http://example.com/track.flac")
+
+        # Temp file should have been cleaned up
+        if created_path:
+            assert not os.path.exists(created_path)
 
 
 # ---------------------------------------------------------------------------
@@ -549,16 +502,8 @@ class TestDownloadAndDecode:
 class TestFeedingLoop:
     async def test_feeding_loop_feeds_all_frames(self) -> None:
         backend = await _create_connected_backend()
-
         audio = _make_audio(1000, channels=2)
-
-        async def fake_download(url):
-            return audio, 44100, 2
-
-        backend._download_and_decode = fake_download
-        backend._stream.set_ring_buffer = MagicMock()
-        backend._stream.open = MagicMock()
-        backend._stream.start = MagicMock()
+        _setup_streaming_mocks(backend, audio)
 
         positions: list[int] = []
         backend.on_position_update(lambda p: positions.append(p))
@@ -566,12 +511,8 @@ class TestFeedingLoop:
         await backend.play("http://example.com/track.flac", _make_metadata())
         await asyncio.sleep(0.1)
 
-        # All frames should be fed (ring buffer is large enough)
-        assert backend._frames_fed == 1000
+        assert backend._frames_decoded == 1000
         assert len(positions) > 0
-
-        # Positions are buffer-corrected: since nothing reads from the buffer
-        # in tests, reported positions may be 0 (all frames still buffered)
         for pos in positions:
             assert pos >= 0
 
@@ -580,27 +521,26 @@ class TestFeedingLoop:
 
     async def test_feeding_loop_seek(self) -> None:
         backend = await _create_connected_backend()
-
-        # 10 seconds of audio at 44100
         audio = _make_audio(441000, channels=2)
-
-        async def fake_download(url):
-            return audio, 44100, 2
-
-        backend._download_and_decode = fake_download
-        backend._stream.set_ring_buffer = MagicMock()
-        backend._stream.open = MagicMock()
-        backend._stream.start = MagicMock()
+        _setup_streaming_mocks(backend, audio)
 
         await backend.play("http://example.com/track.flac", _make_metadata())
         await asyncio.sleep(0.05)
 
-        # Seek to 5 seconds
         await backend.seek(5000)
         await asyncio.sleep(0.1)
 
-        # frames_fed should be at or past 5s mark
-        assert backend._frames_fed >= int(5000 / 1000 * 44100)
+        assert backend._frames_decoded >= int(5000 / 1000 * 44100)
 
         await backend.stop()
         await backend.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Async iteration helper
+# ---------------------------------------------------------------------------
+
+
+async def _async_iter(items):
+    for item in items:
+        yield item

@@ -1,14 +1,21 @@
 """
 Local audio backend.
 
-Downloads FLAC audio from Qobuz, decodes to float32 samples,
-and plays through the local audio device via PortAudio.
+Downloads FLAC audio from Qobuz to a temp file, then stream-decodes and
+plays through the local audio device via PortAudio.
+
+Memory model: peak RAM is ~64 KB during download (chunk buffer) plus the
+ring buffer (~3 MB for 10 s at 96 kHz).  The compressed FLAC file lives
+on disk rather than in memory, which makes Hi-Res playback feasible on
+low-RAM hardware such as a Raspberry Pi Zero W2.
 """
 
 import array
 import asyncio
 import logging
-from typing import Optional
+import os
+import tempfile
+from typing import Any, Generator, Optional
 
 import aiohttp
 
@@ -25,9 +32,9 @@ from .stream import AudioOutputStream
 
 logger = logging.getLogger(__name__)
 
-CHUNK_SIZE = 8192  # Frames per feed iteration
-BUFFER_SECONDS = 10  # Ring buffer capacity in seconds
-BUFFER_HIGH_WATER = 0.8  # Pause feeding when buffer above this level
+CHUNK_SIZE = 8192  # frames per decode iteration
+BUFFER_SECONDS = 10  # ring buffer capacity in seconds
+BUFFER_HIGH_WATER = 0.8  # pause feeding when buffer above this level
 
 
 class LocalAudioBackend(AudioBackend):
@@ -49,12 +56,12 @@ class LocalAudioBackend(AudioBackend):
         self._stream: Optional[AudioOutputStream] = None
 
         # Playback state
-        self._audio_data: Optional[array.array] = None  # flat interleaved float32
+        self._tmp_path: Optional[str] = None  # temp file holding compressed audio
         self._channels: int = 2
         self._sample_rate: int = 0
-        self._frames_fed: int = 0
+        self._frames_decoded: int = 0  # frames fed into the ring buffer so far
         self._total_frames: int = 0
-        self._feeding_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
+        self._feeding_task: Optional[asyncio.Task[None]] = None
 
         # Seek support
         self._seek_target: Optional[int] = None
@@ -62,150 +69,50 @@ class LocalAudioBackend(AudioBackend):
         # Buffer status tracking
         self._last_buffer_status: BufferStatus = BufferStatus.OK
 
+    # ------------------------------------------------------------------
+    # Public AudioBackend interface
+    # ------------------------------------------------------------------
+
     async def play(self, url: str, metadata: BackendTrackMetadata) -> None:
-        """Download FLAC, decode, and start playback."""
+        """Download FLAC to temp file, then start stream-decoding into the ring buffer."""
         await self._cancel_feeding()
+        await self._cleanup_tempfile()
 
         self._notify_state_change(PlaybackState.LOADING)
 
         try:
-            audio_data, sample_rate, channels = await self._download_and_decode(url)
-            self._audio_data = audio_data
+            # Stream-download to disk — peak RAM is one HTTP chunk (~64 KB)
+            self._tmp_path = await self._download_to_tempfile(url)
+
+            # Read audio parameters from the file header
+            sample_rate, channels, total_frames = await self._get_audio_info(self._tmp_path)
             self._sample_rate = sample_rate
             self._channels = channels
-            self._total_frames = len(audio_data) // channels
-            self._frames_fed = 0
+            self._total_frames = total_frames
+            self._frames_decoded = 0
             self._seek_target = None
 
-            # Create ring buffer for this track's sample rate
+            # Ring buffer sized for this track's sample rate
             buffer_frames = int(sample_rate * BUFFER_SECONDS)
             self._ring_buffer = RingBuffer(buffer_frames, channels)
 
-            # Update stream's ring buffer and open/reconfigure
             self._stream.set_ring_buffer(self._ring_buffer)
             self._stream.open(sample_rate, channels)
             self._stream.start()
 
-            # Start feeding loop
             self._feeding_task = asyncio.create_task(self._feeding_loop())
             self._notify_state_change(PlaybackState.PLAYING)
 
             logger.info(
                 f"Playing: {metadata.artist} - {metadata.title} "
-                f"({sample_rate}Hz, {self._total_frames} frames)"
+                f"({sample_rate}Hz, {total_frames} frames)"
             )
 
         except Exception as e:
             logger.error(f"Playback error: {e}")
+            await self._cleanup_tempfile()
             self._notify_state_change(PlaybackState.ERROR)
             self._notify_playback_error(str(e))
-
-    async def _download_and_decode(self, url: str) -> tuple[array.array, int, int]:
-        """Download audio file and decode to flat float32 array.
-
-        Returns:
-            Tuple of (samples, sample_rate, channels) where samples is a flat
-            array.array('f') of interleaved float32 values.
-        """
-        import miniaudio
-
-        logger.debug("Downloading audio from URL...")
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                response.raise_for_status()
-                data = await response.read()
-
-        logger.debug(f"Downloaded {len(data)} bytes, decoding...")
-        # Run decode in thread pool — miniaudio.decode() is synchronous and can
-        # block the event loop for several seconds on slow hardware (armv7).
-        decoded = await asyncio.to_thread(
-            miniaudio.decode,
-            data,
-            miniaudio.SampleFormat.FLOAT32,
-            0,  # nchannels: preserve source
-            0,  # sample_rate: preserve source
-        )
-
-        audio_data: array.array = array.array("f")
-        # decoded.samples may be bytes, bytearray, or memoryview
-        audio_data.frombytes(bytes(decoded.samples))
-
-        channels: int = decoded.nchannels
-        sample_rate: int = decoded.sample_rate
-
-        logger.debug(
-            f"Decoded: {decoded.num_frames} frames, {channels}ch, {sample_rate}Hz"
-        )
-        return audio_data, sample_rate, channels
-
-    async def _feeding_loop(self) -> None:
-        """Feed decoded audio to ring buffer in chunks."""
-        try:
-            while self._frames_fed < self._total_frames:
-                # Handle seek
-                if self._seek_target is not None:
-                    target = self._seek_target
-                    self._seek_target = None
-                    self._ring_buffer.clear()
-                    self._frames_fed = min(target, self._total_frames)
-                    logger.debug(f"Seek applied: jumping to frame {self._frames_fed}")
-                    if self._frames_fed >= self._total_frames:
-                        break
-                    # Notify position immediately after seek
-                    position_ms = int(self._frames_fed / self._sample_rate * 1000)
-                    self._notify_position_update(position_ms)
-                    continue
-
-                # Pace: wait if buffer is full enough
-                if self._ring_buffer.fill_level() > BUFFER_HIGH_WATER:
-                    await asyncio.sleep(0.05)
-                    continue
-
-                # Feed next chunk
-                end = min(self._frames_fed + CHUNK_SIZE, self._total_frames)
-                start_sample = self._frames_fed * self._channels
-                end_sample = end * self._channels
-                chunk = self._audio_data[start_sample:end_sample]
-                written = self._ring_buffer.write(chunk)
-                self._frames_fed += written
-
-                # Check buffer health
-                self._check_buffer_status()
-
-                # Notify position update (with buffer latency correction)
-                buffer_latency_frames = self._ring_buffer.available()
-                actual_frames_played = self._frames_fed - buffer_latency_frames
-                position_ms = int(max(0, actual_frames_played) / self._sample_rate * 1000)
-                self._notify_position_update(position_ms)
-
-                await asyncio.sleep(0)  # Yield to event loop
-
-            # Wait for buffer to drain
-            while self._ring_buffer.available() > 0:
-                if self._state == PlaybackState.STOPPED:
-                    return
-                await asyncio.sleep(0.1)
-
-            # Track ended naturally
-            self._notify_state_change(PlaybackState.STOPPED)
-            self._notify_track_ended()
-
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Feeding loop error: {e}")
-            self._notify_state_change(PlaybackState.ERROR)
-            self._notify_playback_error(str(e))
-
-    async def _cancel_feeding(self) -> None:
-        """Cancel the current feeding task if running."""
-        if self._feeding_task and not self._feeding_task.done():
-            self._feeding_task.cancel()
-            try:
-                await self._feeding_task
-            except asyncio.CancelledError:
-                pass
-        self._feeding_task = None
 
     async def pause(self) -> None:
         if self._stream:
@@ -223,55 +130,48 @@ class LocalAudioBackend(AudioBackend):
             self._ring_buffer.clear()
         if self._stream:
             self._stream.stop()
-        self._frames_fed = 0
-        self._audio_data = None
+        self._frames_decoded = 0
+        await self._cleanup_tempfile()
         self._notify_state_change(PlaybackState.STOPPED)
 
     async def seek(self, position_ms: int) -> None:
-        """Seek to position in current track."""
-        if self._sample_rate == 0 or self._audio_data is None:
+        """Seek to position in the current track."""
+        if self._sample_rate == 0 or self._tmp_path is None:
             return
 
         target_frame = int(position_ms / 1000 * self._sample_rate)
 
-        # Edge case: seek beyond duration → trigger track end
         if target_frame >= self._total_frames:
             logger.debug(f"Seek beyond duration ({position_ms}ms), ending track")
             await self._cancel_feeding()
             if self._ring_buffer:
                 self._ring_buffer.clear()
-            self._frames_fed = self._total_frames
+            self._frames_decoded = self._total_frames
             self._notify_state_change(PlaybackState.STOPPED)
             self._notify_track_ended()
             return
 
-        # Edge case: seek to negative → clamp to 0
         target_frame = max(0, target_frame)
-
         logger.debug(f"Seek to {position_ms}ms (frame {target_frame})")
         self._seek_target = target_frame
 
-        # If no feeding loop is running (e.g., paused after track end),
-        # update position directly
+        # If the feeding loop isn't running (e.g. paused after track end),
+        # restart it so it can apply the seek.
         if self._feeding_task is None or self._feeding_task.done():
             if self._ring_buffer:
                 self._ring_buffer.clear()
-            self._frames_fed = target_frame
+            self._frames_decoded = target_frame
+            self._feeding_task = asyncio.create_task(self._feeding_loop())
 
     async def get_position(self) -> int:
-        """Get current playback position accounting for buffer latency."""
+        """Current playback position in ms, corrected for ring buffer latency."""
         if self._sample_rate == 0:
             return 0
-
-        raw_position_ms = self._frames_fed / self._sample_rate * 1000
-
-        # Subtract buffer latency (frames in buffer haven't been played yet)
-        buffer_latency_ms = 0.0
+        raw_ms = self._frames_decoded / self._sample_rate * 1000
+        latency_ms = 0.0
         if self._ring_buffer:
-            buffer_latency_ms = self._ring_buffer.available() / self._sample_rate * 1000
-
-        actual_position_ms = max(0.0, raw_position_ms - buffer_latency_ms)
-        return int(actual_position_ms)
+            latency_ms = self._ring_buffer.available() / self._sample_rate * 1000
+        return int(max(0.0, raw_ms - latency_ms))
 
     async def set_volume(self, level: int) -> None:
         self._volume = max(0, min(100, level))
@@ -285,57 +185,20 @@ class LocalAudioBackend(AudioBackend):
         return self._state
 
     async def get_buffer_status(self) -> BufferStatus:
-        """Get buffer health based on ring buffer fill level."""
         if not self._ring_buffer:
             return BufferStatus.OK
-
-        level = self._ring_buffer.fill_level()
-
-        if level == 0.0:
-            return BufferStatus.EMPTY
-        elif level < 0.10:
-            return BufferStatus.LOW
-        elif level >= 1.0:
-            return BufferStatus.FULL
-        else:
-            return BufferStatus.OK
-
-    def _check_buffer_status(self) -> None:
-        """Check and notify buffer status changes."""
-        if not self._ring_buffer:
-            return
-
-        level = self._ring_buffer.fill_level()
-
-        if level == 0.0:
-            status = BufferStatus.EMPTY
-        elif level < 0.10:
-            status = BufferStatus.LOW
-        elif level >= 1.0:
-            status = BufferStatus.FULL
-        else:
-            status = BufferStatus.OK
-
-        if status != self._last_buffer_status:
-            self._last_buffer_status = status
-            self._notify_buffer_status(status)
-
-            if status == BufferStatus.EMPTY:
-                logger.warning("Audio buffer underrun — audio may glitch")
+        return self._buffer_status_from_level(self._ring_buffer.fill_level())
 
     async def connect(self) -> bool:
-        """Initialize connection — resolve device and create audio stream."""
+        """Resolve audio device and create the output stream."""
         try:
             self._device_info = resolve_device(self._device_config)
             self.name = f"Local: {self._device_info.name}"
-
-            # Create audio output stream (not opened until play)
             self._stream = AudioOutputStream(
                 device_index=self._device_info.index,
-                ring_buffer=RingBuffer(1, 2),  # Placeholder, replaced per-track
+                ring_buffer=RingBuffer(1, 2),  # placeholder, replaced per-track
                 blocksize=self._buffer_size,
             )
-
             self._is_connected = True
             logger.info(
                 f"Audio output device: {self._device_info.name} "
@@ -360,3 +223,176 @@ class LocalAudioBackend(AudioBackend):
             name=self.name,
             device_id=f"local-{self._device_config}",
         )
+
+    # ------------------------------------------------------------------
+    # Internal helpers — download / decode pipeline
+    # ------------------------------------------------------------------
+
+    async def _download_to_tempfile(self, url: str) -> str:
+        """Stream-download *url* to a temp file and return its path.
+
+        Writes in 64 KB chunks so peak RAM is the chunk size, not the full
+        compressed file.  The caller is responsible for deleting the file.
+        """
+        fd, path = tempfile.mkstemp(suffix=".flac")
+        try:
+            logger.debug("Downloading audio...")
+            total = 0
+            with os.fdopen(fd, "wb") as f:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as response:
+                        response.raise_for_status()
+                        async for chunk in response.content.iter_chunked(65536):
+                            f.write(chunk)
+                            total += len(chunk)
+            logger.debug(f"Downloaded {total} bytes")
+            return path
+        except Exception:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
+
+    async def _get_audio_info(self, path: str) -> tuple[int, int, int]:
+        """Return (sample_rate, channels, total_frames) for *path* (thread pool)."""
+        import miniaudio
+        info = await asyncio.to_thread(miniaudio.get_file_info, path)
+        return info.sample_rate, info.nchannels, info.num_frames
+
+    def _make_stream(self, start_frame: int = 0) -> Generator[array.array, Any, None]:
+        """Return a miniaudio stream_file generator starting at *start_frame*.
+
+        Synchronous — call via ``asyncio.to_thread`` for large seeks.
+        ``seek_frame`` is handled natively by miniaudio (uses the FLAC seektable),
+        so seeking is O(1) regardless of position.
+        """
+        import miniaudio
+        return miniaudio.stream_file(
+            self._tmp_path,
+            output_format=miniaudio.SampleFormat.FLOAT32,
+            nchannels=self._channels,
+            sample_rate=self._sample_rate,
+            frames_to_read=CHUNK_SIZE,
+            seek_frame=start_frame,
+        )
+
+    # ------------------------------------------------------------------
+    # Feeding loop
+    # ------------------------------------------------------------------
+
+    async def _feeding_loop(self) -> None:
+        """Decode FLAC from the temp file and feed the ring buffer in chunks.
+
+        Each ``next()`` call is dispatched to the thread pool so the event
+        loop is never blocked, even briefly, during FLAC decode.
+        """
+        stream: Generator[array.array, Any, None] = await asyncio.to_thread(
+            self._make_stream, 0
+        )
+        pending_chunk: Optional[array.array] = None
+
+        try:
+            while True:
+                # ---- seek ------------------------------------------------
+                if self._seek_target is not None:
+                    target = self._seek_target
+                    self._seek_target = None
+                    self._ring_buffer.clear()
+                    pending_chunk = None
+                    if target >= self._total_frames:
+                        break
+                    stream = await asyncio.to_thread(self._make_stream, target)
+                    self._frames_decoded = target
+                    position_ms = int(target / self._sample_rate * 1000)
+                    self._notify_position_update(position_ms)
+                    continue
+
+                # ---- fetch next chunk ------------------------------------
+                if pending_chunk is None:
+                    chunk: Optional[array.array] = await asyncio.to_thread(
+                        next, stream, None  # type: ignore[arg-type]
+                    )
+                    if chunk is None:
+                        break  # end of stream
+                    pending_chunk = chunk
+
+                # ---- back-pressure: wait if ring buffer is nearly full ---
+                if self._ring_buffer.fill_level() > BUFFER_HIGH_WATER:
+                    await asyncio.sleep(0.05)
+                    continue
+
+                # ---- write to ring buffer --------------------------------
+                written = self._ring_buffer.write(pending_chunk)
+                self._frames_decoded += written
+                pending_chunk = None
+
+                self._check_buffer_status()
+
+                buffer_latency = self._ring_buffer.available()
+                actual_frames = self._frames_decoded - buffer_latency
+                position_ms = int(max(0, actual_frames) / self._sample_rate * 1000)
+                self._notify_position_update(position_ms)
+
+                await asyncio.sleep(0)  # yield to event loop between chunks
+
+            # ---- drain ring buffer before signalling end -----------------
+            while self._ring_buffer.available() > 0:
+                if self._state == PlaybackState.STOPPED:
+                    return
+                await asyncio.sleep(0.1)
+
+            self._notify_state_change(PlaybackState.STOPPED)
+            self._notify_track_ended()
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Feeding loop error: {e}")
+            self._notify_state_change(PlaybackState.ERROR)
+            self._notify_playback_error(str(e))
+        finally:
+            await self._cleanup_tempfile()
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    async def _cancel_feeding(self) -> None:
+        if self._feeding_task and not self._feeding_task.done():
+            self._feeding_task.cancel()
+            try:
+                await self._feeding_task
+            except asyncio.CancelledError:
+                pass
+        self._feeding_task = None
+
+    async def _cleanup_tempfile(self) -> None:
+        """Delete the temp FLAC file if it exists."""
+        if self._tmp_path:
+            try:
+                os.unlink(self._tmp_path)
+                logger.debug(f"Deleted temp file {self._tmp_path}")
+            except OSError:
+                pass
+            self._tmp_path = None
+
+    def _check_buffer_status(self) -> None:
+        if not self._ring_buffer:
+            return
+        status = self._buffer_status_from_level(self._ring_buffer.fill_level())
+        if status != self._last_buffer_status:
+            self._last_buffer_status = status
+            self._notify_buffer_status(status)
+            if status == BufferStatus.EMPTY:
+                logger.warning("Audio buffer underrun — audio may glitch")
+
+    @staticmethod
+    def _buffer_status_from_level(level: float) -> BufferStatus:
+        if level == 0.0:
+            return BufferStatus.EMPTY
+        if level < 0.10:
+            return BufferStatus.LOW
+        if level >= 1.0:
+            return BufferStatus.FULL
+        return BufferStatus.OK

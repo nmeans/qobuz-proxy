@@ -3,7 +3,10 @@
 import array
 import asyncio
 import random
-from unittest.mock import MagicMock, patch
+from typing import Generator
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from qobuz_proxy.backends.local.backend import CHUNK_SIZE
 
 from qobuz_proxy.backends.local.backend import LocalAudioBackend
 from qobuz_proxy.backends.types import BackendTrackMetadata, BufferStatus
@@ -176,10 +179,17 @@ class TestBufferStatusNotification:
 
         audio = array.array("f", [random.random() for _ in range(1000 * 2)])
 
-        async def fake_download(url):
-            return audio, 44100, 2
+        def _audio_gen(start_frame: int = 0) -> Generator:
+            pos = start_frame
+            total = len(audio) // 2
+            while pos < total:
+                end = min(pos + CHUNK_SIZE, total)
+                yield audio[pos * 2 : end * 2]
+                pos = end
 
-        backend._download_and_decode = fake_download
+        backend._download_to_tempfile = AsyncMock(return_value="/fake/track.flac")  # type: ignore[method-assign]
+        backend._get_audio_info = AsyncMock(return_value=(44100, 2, 1000))  # type: ignore[method-assign]
+        backend._make_stream = _audio_gen  # type: ignore[method-assign]
         backend._stream.set_ring_buffer = MagicMock()
         backend._stream.open = MagicMock()
         backend._stream.start = MagicMock()
@@ -187,10 +197,6 @@ class TestBufferStatusNotification:
         await backend.play("http://example.com/track.flac", _make_metadata())
         await asyncio.sleep(0.1)
 
-        # Buffer status should have been checked at least once
-        # (exact statuses depend on timing, but _check_buffer_status was called)
-        # The initial transition from OK to some status may or may not fire
-        # depending on exact fill levels
         assert backend._last_buffer_status is not None
 
         await backend.stop()
