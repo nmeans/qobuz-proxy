@@ -428,6 +428,8 @@ class TestDownloadToTempfile:
 
         mock_response = AsyncMock()
         mock_response.raise_for_status = MagicMock()
+        mock_response.status = 200
+        mock_response.headers = {"content-length": str(len(fake_data))}
         mock_response.content.iter_chunked = MagicMock(
             return_value=_async_iter([fake_data[:512], fake_data[512:]])
         )

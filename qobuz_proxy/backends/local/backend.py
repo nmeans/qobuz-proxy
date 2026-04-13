@@ -238,14 +238,26 @@ class LocalAudioBackend(AudioBackend):
         try:
             logger.debug("Downloading audio...")
             total = 0
+            timeout = aiohttp.ClientTimeout(total=300, connect=15, sock_read=30)
+            headers = {"User-Agent": "Qobuz/6.0.0 CFNetwork/1568.300.101 Darwin/24.2.0"}
+            loop = asyncio.get_event_loop()
+            last_log = loop.time()
             with os.fdopen(fd, "wb") as f:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as response:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(url, headers=headers) as response:
                         response.raise_for_status()
+                        logger.debug(
+                            f"Download started: HTTP {response.status}, "
+                            f"content-length={response.headers.get('content-length', 'unknown')}"
+                        )
                         async for chunk in response.content.iter_chunked(65536):
-                            f.write(chunk)
+                            await asyncio.to_thread(f.write, chunk)
                             total += len(chunk)
-            logger.debug(f"Downloaded {total} bytes")
+                            now = loop.time()
+                            if now - last_log >= 5.0:
+                                logger.debug(f"Downloaded {total // 1024}KB so far...")
+                                last_log = now
+            logger.debug(f"Download complete: {total} bytes")
             return path
         except Exception:
             try:
