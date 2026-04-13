@@ -3,7 +3,7 @@
   # System deps
   # libasound2: ALSA runtime required by PortAudio (and thus sounddevice) on Linux
   RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl libportaudio2 libasound2 portaudio19-dev gcc g++ python3-dev libffi-dev \
+      curl libportaudio2 libasound2t64 portaudio19-dev gcc g++ python3-dev libffi-dev \
       && rm -rf /var/lib/apt/lists/*
 
   # Compile-heavy audio packages first — cached until these change
