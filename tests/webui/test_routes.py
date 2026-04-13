@@ -120,7 +120,7 @@ async def test_auth_callback_success(client: TestClient) -> None:
     client.app["on_auth_token"].assert_awaited_once_with(  # type: ignore[union-attr]
         "12345",
         "secret-token",
-        {"email": "test@example.com", "name": "Test User", "avatar": ""},
+        {"email": "test@example.com", "name": "Test User", "avatar": "", "token_app_id": ""},
         validated=True,
     )
 

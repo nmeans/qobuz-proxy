@@ -40,15 +40,24 @@ def extract_code(url: str) -> str:
     return codes[0]
 
 
-async def exchange_code(code: str) -> dict[str, str]:
+async def exchange_code(code: str, web_app_id: str = "") -> dict[str, str]:
     """Exchange an OAuth authorization code for user credentials.
 
+    Args:
+        code: The ``code_autorisation`` received from the OAuth callback.
+        web_app_id: If provided, try this app ID first for the ``user/login``
+            validation step.  The web-player app ID (scraped at startup) is
+            the only one accepted by ``track/getFileUrl``, so passing it here
+            means the returned ``user_auth_token`` will already be scoped to
+            that app and can be used directly with web-player signing.
+
     Returns a dict with ``user_id``, ``user_auth_token``, ``display_name``,
-    and ``email`` keys.
+    ``email``, and ``token_app_id`` keys.  ``token_app_id`` is the app ID
+    that was actually used for the ``user/login`` step.
     """
     timeout = aiohttp.ClientTimeout(total=15)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        # Step 1: exchange code for token
+        # Step 1: exchange code for raw OAuth token
         async with session.get(
             f"{QOBUZ_API_BASE}/oauth/callback",
             params={"code": code, "private_key": OAUTH_PRIVATE_KEY},
@@ -62,28 +71,45 @@ async def exchange_code(code: str) -> dict[str, str]:
         token = data["token"]
         user_id = str(data["user_id"])
 
-        # Step 2: validate token and fetch profile
-        async with session.post(
-            f"{QOBUZ_API_BASE}/user/login",
-            data="extra=partner",
-            headers={
-                "X-App-Id": OAUTH_APP_ID,
-                "X-User-Auth-Token": token,
-                "Content-Type": "text/plain;charset=UTF-8",
-            },
-        ) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"Login validation failed: {resp.status}")
-            profile_data = await resp.json()
+        # Step 2: validate token and fetch profile.
+        # Try the web-player app ID first (if provided) — a token scoped to
+        # the web-player app can be used with MD5 signing for getFileUrl.
+        # Fall back to the OAuth app ID if the web-player login fails.
+        app_ids_to_try = []
+        if web_app_id and web_app_id != OAUTH_APP_ID:
+            app_ids_to_try.append(web_app_id)
+        app_ids_to_try.append(OAUTH_APP_ID)
+
+        profile_data = None
+        token_app_id = OAUTH_APP_ID
+        for try_app_id in app_ids_to_try:
+            async with session.post(
+                f"{QOBUZ_API_BASE}/user/login",
+                data="extra=partner",
+                headers={
+                    "X-App-Id": try_app_id,
+                    "X-User-Auth-Token": token,
+                    "Content-Type": "text/plain;charset=UTF-8",
+                },
+            ) as resp:
+                if resp.status == 200:
+                    profile_data = await resp.json()
+                    token_app_id = try_app_id
+                    logger.debug(f"user/login succeeded with app_id={try_app_id}")
+                    break
+                else:
+                    logger.debug(
+                        f"user/login with app_id={try_app_id} failed ({resp.status})"
+                    )
+
+        if profile_data is None:
+            raise RuntimeError("Login validation failed for all app IDs")
 
     user = profile_data.get("user", {})
     avatar = user.get("avatar", "")
     if isinstance(avatar, dict):
         avatar = avatar.get("url", "") or avatar.get("large", "") or ""
 
-    # Use the session token from the login response — it is valid for signed
-    # REST API calls regardless of which app_id signs subsequent requests.
-    # The raw callback `token` is only valid with the OAuth app_id.
     session_token = profile_data.get("user_auth_token") or token
 
     return {
@@ -92,4 +118,5 @@ async def exchange_code(code: str) -> dict[str, str]:
         "display_name": user.get("display_name", ""),
         "email": user.get("email", ""),
         "avatar": avatar,
+        "token_app_id": token_app_id,
     }

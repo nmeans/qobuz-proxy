@@ -228,34 +228,30 @@ class QobuzProxy:
             self._app_secret = credentials["app_secret"]
 
         if validated:
-            # The OAuth token is app-scoped to OAUTH_APP_ID (304027809).
-            # getFileUrl only accepts signatures from the web-player app, so we
-            # try to exchange the OAuth token for one scoped to the scraped
-            # web-player app_id via an unsigned user/login call.
-            if self._app_id:
-                web_client = QobuzAPIClient(self._app_id, self._app_secret)
-                if await web_client.exchange_token_for_app(user_id, auth_token):
-                    self._api_client = web_client
-                    logger.info(
-                        f"OAuth token exchanged for web-player token "
-                        f"(app_id={self._app_id})"
-                    )
-                else:
-                    logger.warning(
-                        "Token exchange failed — falling back to OAuth app credentials"
-                    )
-                    from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_APP_SECRET
-
-                    self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_APP_SECRET)
-                    self._api_client.user_auth_token = auth_token
-                    self._api_client.user_id = user_id
+            # exchange_code() attempted to scope the token to the scraped
+            # web-player app_id (stored in profile["token_app_id"]).  If that
+            # succeeded we use the web-player credentials for signing so
+            # getFileUrl works.  If it fell back to the OAuth app, we use
+            # those credentials instead (getFileUrl will likely still fail,
+            # but at least the signature will be internally consistent).
+            token_app_id = profile.get("token_app_id", "")
+            if token_app_id and token_app_id == self._app_id:
+                self._api_client = QobuzAPIClient(self._app_id, self._app_secret)
+                self._api_client.user_auth_token = auth_token
+                self._api_client.user_id = user_id
+                logger.info(
+                    f"OAuth login scoped to web-player app (app_id={self._app_id})"
+                )
             else:
                 from qobuz_proxy.auth.oauth import OAUTH_APP_ID, OAUTH_APP_SECRET
 
                 self._api_client = QobuzAPIClient(OAUTH_APP_ID, OAUTH_APP_SECRET)
                 self._api_client.user_auth_token = auth_token
                 self._api_client.user_id = user_id
-                logger.info("OAuth signing for all API requests (app_id=304027809)")
+                logger.warning(
+                    f"OAuth token scoped to {token_app_id or OAUTH_APP_ID} "
+                    f"(not web-player {self._app_id}) — getFileUrl may fail"
+                )
         elif not await self._authenticate(user_id, auth_token):
             return False
 
@@ -467,6 +463,7 @@ class QobuzProxy:
         self._web_app["version"] = __version__
         self._web_app["on_auth_token"] = self._on_auth_token
         self._web_app["on_email_login"] = self._on_email_login
+        self._web_app["get_scraped_app_id"] = lambda: self._app_id
         self._web_app["on_logout"] = self._on_logout
         self._web_app["on_add_speaker"] = self._on_add_speaker
         self._web_app["on_edit_speaker"] = self._on_edit_speaker

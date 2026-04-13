@@ -64,8 +64,9 @@ async def _handle_auth_callback(request: web.Request) -> web.Response:
     except ValueError:
         raise web.HTTPFound("/?error=missing_code")
 
+    web_app_id: str = request.app.get("get_scraped_app_id", lambda: "")()
     try:
-        creds = await exchange_code(code)
+        creds = await exchange_code(code, web_app_id=web_app_id)
     except Exception:
         logger.exception("OAuth code exchange failed")
         raise web.HTTPFound("/?error=exchange_failed")
@@ -74,6 +75,7 @@ async def _handle_auth_callback(request: web.Request) -> web.Response:
         "email": creds.get("email", ""),
         "name": creds.get("display_name", ""),
         "avatar": creds.get("avatar", ""),
+        "token_app_id": creds.get("token_app_id", ""),
     }
 
     callback = request.app["on_auth_token"]
