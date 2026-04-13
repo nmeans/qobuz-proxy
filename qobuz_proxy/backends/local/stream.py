@@ -44,13 +44,13 @@ class AudioOutputStream:
         """
         Open the audio stream.
 
-        Closes existing stream if sample rate changed.
+        Always closes and recreates the stream so PortAudio starts fresh
+        for each track — reusing a stopped stream causes the callback to
+        never pull from the ring buffer.
         """
         import sounddevice as sd
 
         if self._stream is not None:
-            if self._sample_rate == sample_rate and self._channels == channels:
-                return  # Already open at correct rate
             self.close()
 
         self._sample_rate = sample_rate
