@@ -66,7 +66,11 @@ async def _start_playback(
     """Start playback with fake streaming audio."""
     audio = array.array("f", [random.random() for _ in range(total_frames * channels)])
 
-    backend._download_to_tempfile = AsyncMock(return_value="/fake/track.flac")  # type: ignore[method-assign]
+    async def _fake_stream_download(url: str, path: str, header_ready: asyncio.Event) -> None:
+        header_ready.set()
+        backend._download_complete = True  # type: ignore[attr-defined]
+
+    backend._stream_download = _fake_stream_download  # type: ignore[method-assign]
     backend._get_audio_info = AsyncMock(return_value=(sample_rate, channels, total_frames))  # type: ignore[method-assign]
     backend._make_stream = lambda start_frame=0: _audio_gen(audio, channels, start_frame)  # type: ignore[method-assign]
     backend._stream.set_ring_buffer = MagicMock()

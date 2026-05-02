@@ -69,9 +69,15 @@ def _setup_streaming_mocks(
     sample_rate: int = 44100,
     channels: int = 2,
 ) -> None:
-    """Patch the three streaming-pipeline methods so tests need no real files."""
+    """Patch the streaming-pipeline methods so tests need no real files."""
     total_frames = len(audio) // channels
-    backend._download_to_tempfile = AsyncMock(return_value="/fake/track.flac")  # type: ignore[method-assign]
+
+    async def _fake_stream_download(url: str, path: str, header_ready: asyncio.Event) -> None:
+        # Signal header ready immediately and mark download complete
+        header_ready.set()
+        backend._download_complete = True  # type: ignore[attr-defined]
+
+    backend._stream_download = _fake_stream_download  # type: ignore[method-assign]
     backend._get_audio_info = AsyncMock(return_value=(sample_rate, channels, total_frames))  # type: ignore[method-assign]
     backend._make_stream = lambda start_frame=0: _audio_gen(audio, channels, start_frame)  # type: ignore[method-assign]
     backend._stream.set_ring_buffer = MagicMock()
@@ -116,9 +122,12 @@ class TestPlayStateTransitions:
         backend.on_state_change(lambda s: states.append(s))
         backend.on_playback_error(lambda e: errors.append(e))
 
-        backend._download_to_tempfile = AsyncMock(  # type: ignore[method-assign]
-            side_effect=aiohttp.ClientError("Download failed")
-        )
+        async def _failing_download(url: str, path: str, header_ready: asyncio.Event) -> None:
+            header_ready.set()
+            backend._download_complete = True  # type: ignore[attr-defined]
+            raise aiohttp.ClientError("Download failed")
+
+        backend._stream_download = _failing_download  # type: ignore[method-assign]
 
         await backend.play("http://example.com/track.flac", _make_metadata())
 
@@ -134,7 +143,11 @@ class TestPlayStateTransitions:
         errors: list[str] = []
         backend.on_playback_error(lambda e: errors.append(e))
 
-        backend._download_to_tempfile = AsyncMock(return_value="/fake/track.flac")  # type: ignore[method-assign]
+        async def _fake_stream_download(url: str, path: str, header_ready: asyncio.Event) -> None:
+            header_ready.set()
+            backend._download_complete = True  # type: ignore[attr-defined]
+
+        backend._stream_download = _fake_stream_download  # type: ignore[method-assign]
         backend._get_audio_info = AsyncMock(  # type: ignore[method-assign]
             side_effect=RuntimeError("Decode error: unsupported format")
         )
@@ -418,13 +431,18 @@ class TestConnectDisconnect:
 # ---------------------------------------------------------------------------
 
 
-class TestDownloadToTempfile:
-    async def test_download_streams_to_disk(self) -> None:
-        """_download_to_tempfile writes response chunks to a file."""
+class TestStreamDownload:
+    async def test_download_writes_to_path(self) -> None:
+        """_stream_download writes response chunks to the given path."""
         import os
+        import tempfile as _tempfile
 
         backend = LocalAudioBackend()
         fake_data = b"fake-flac-data-" * 100
+        fd, path = _tempfile.mkstemp(suffix=".flac")
+        os.close(fd)
+
+        header_ready = asyncio.Event()
 
         mock_response = AsyncMock()
         mock_response.raise_for_status = MagicMock()
@@ -441,12 +459,16 @@ class TestDownloadToTempfile:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            path = await backend._download_to_tempfile("http://example.com/track.flac")
-
         try:
+            with patch("aiohttp.ClientSession", return_value=mock_session):
+                await backend._stream_download(
+                    "http://example.com/track.flac", path, header_ready
+                )
+
             assert os.path.exists(path)
             assert path.endswith(".flac")
+            assert header_ready.is_set()
+            assert backend._download_complete is True
             with open(path, "rb") as f:
                 written = f.read()
             assert written == fake_data
@@ -454,11 +476,16 @@ class TestDownloadToTempfile:
             if os.path.exists(path):
                 os.unlink(path)
 
-    async def test_download_cleans_up_on_error(self) -> None:
-        """Temp file is deleted if download raises."""
+    async def test_download_sets_header_ready_on_error(self) -> None:
+        """header_ready is set even when download raises, so play() can surface the error."""
         import os
+        import tempfile as _tempfile
 
         backend = LocalAudioBackend()
+        fd, path = _tempfile.mkstemp(suffix=".flac")
+        os.close(fd)
+
+        header_ready = asyncio.Event()
 
         mock_response = AsyncMock()
         mock_response.raise_for_status = MagicMock(
@@ -474,26 +501,17 @@ class TestDownloadToTempfile:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
 
-        created_path = None
+        try:
+            with patch("aiohttp.ClientSession", return_value=mock_session):
+                with pytest.raises(aiohttp.ClientResponseError):
+                    await backend._stream_download(
+                        "http://example.com/track.flac", path, header_ready
+                    )
 
-        original_mkstemp = __import__("tempfile").mkstemp
-
-        def capturing_mkstemp(*args, **kwargs):
-            nonlocal created_path
-            fd, path = original_mkstemp(*args, **kwargs)
-            created_path = path
-            return fd, path
-
-        with (
-            patch("aiohttp.ClientSession", return_value=mock_session),
-            patch("tempfile.mkstemp", side_effect=capturing_mkstemp),
-        ):
-            with pytest.raises(aiohttp.ClientResponseError):
-                await backend._download_to_tempfile("http://example.com/track.flac")
-
-        # Temp file should have been cleaned up
-        if created_path:
-            assert not os.path.exists(created_path)
+            assert header_ready.is_set()  # Must be set so play() can unblock
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
 
 
 # ---------------------------------------------------------------------------

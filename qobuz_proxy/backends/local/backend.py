@@ -63,6 +63,11 @@ class LocalAudioBackend(AudioBackend):
         self._total_frames: int = 0
         self._feeding_task: Optional[asyncio.Task[None]] = None
 
+        # Download state (download runs concurrently with feeding)
+        self._download_task: Optional[asyncio.Task[None]] = None
+        self._download_complete: bool = False
+        self._header_ready: Optional[asyncio.Event] = None
+
         # Seek support
         self._seek_target: Optional[int] = None
 
@@ -74,17 +79,42 @@ class LocalAudioBackend(AudioBackend):
     # ------------------------------------------------------------------
 
     async def play(self, url: str, metadata: BackendTrackMetadata) -> None:
-        """Download FLAC to temp file, then start stream-decoding into the ring buffer."""
+        """Start streaming FLAC playback.
+
+        The download runs in the background; playback begins as soon as the
+        FLAC header is available (first HTTP chunk, typically < 1 second).
+        The feeding loop reads the growing temp file and handles the case
+        where decoding catches up to the download position.
+        """
         await self._cancel_feeding()
+        await self._cancel_download()
         await self._cleanup_tempfile()
 
         self._notify_state_change(PlaybackState.LOADING)
 
         try:
-            # Stream-download to disk — peak RAM is one HTTP chunk (~64 KB)
-            self._tmp_path = await self._download_to_tempfile(url)
+            # Create temp file and start downloading in background
+            fd, path = tempfile.mkstemp(suffix=".flac")
+            os.close(fd)  # _stream_download opens it itself
+            self._tmp_path = path
+            self._download_complete = False
+            self._header_ready = asyncio.Event()
 
-            # Read audio parameters from the file header
+            self._download_task = asyncio.create_task(
+                self._stream_download(url, path, self._header_ready)
+            )
+
+            # Wait only for the first chunk (contains FLAC header) — usually < 1 s
+            try:
+                await asyncio.wait_for(asyncio.shield(self._header_ready.wait()), timeout=15.0)
+            except asyncio.TimeoutError:
+                raise RuntimeError("Download stalled: no data received in 15 seconds")
+
+            # If the download task already failed, surface the error now
+            if self._download_task.done() and self._download_task.exception():
+                raise self._download_task.exception()  # type: ignore[misc]
+
+            # Read audio parameters from the FLAC header now in the temp file
             sample_rate, channels, total_frames = await self._get_audio_info(self._tmp_path)
             self._sample_rate = sample_rate
             self._channels = channels
@@ -110,6 +140,7 @@ class LocalAudioBackend(AudioBackend):
 
         except Exception as e:
             logger.error(f"Playback error: {e}")
+            await self._cancel_download()
             await self._cleanup_tempfile()
             self._notify_state_change(PlaybackState.ERROR)
             self._notify_playback_error(str(e))
@@ -126,6 +157,7 @@ class LocalAudioBackend(AudioBackend):
 
     async def stop(self) -> None:
         await self._cancel_feeding()
+        await self._cancel_download()
         if self._ring_buffer:
             self._ring_buffer.clear()
         if self._stream:
@@ -228,21 +260,23 @@ class LocalAudioBackend(AudioBackend):
     # Internal helpers — download / decode pipeline
     # ------------------------------------------------------------------
 
-    async def _download_to_tempfile(self, url: str) -> str:
-        """Stream-download *url* to a temp file and return its path.
+    async def _stream_download(
+        self, url: str, path: str, header_ready: asyncio.Event
+    ) -> None:
+        """Download *url* to *path* in the background.
 
-        Writes in 64 KB chunks so peak RAM is the chunk size, not the full
-        compressed file.  The caller is responsible for deleting the file.
+        Sets *header_ready* after the first chunk is flushed so the caller
+        can proceed with audio-info extraction while the rest downloads.
+        Sets ``self._download_complete`` when the transfer finishes.
         """
-        fd, path = tempfile.mkstemp(suffix=".flac")
+        logger.debug("Downloading audio...")
+        total = 0
+        timeout = aiohttp.ClientTimeout(total=300, connect=15, sock_read=30)
+        headers = {"User-Agent": "Qobuz/6.0.0 CFNetwork/1568.300.101 Darwin/24.2.0"}
+        loop = asyncio.get_running_loop()
+        last_log = loop.time()
         try:
-            logger.debug("Downloading audio...")
-            total = 0
-            timeout = aiohttp.ClientTimeout(total=300, connect=15, sock_read=30)
-            headers = {"User-Agent": "Qobuz/6.0.0 CFNetwork/1568.300.101 Darwin/24.2.0"}
-            loop = asyncio.get_event_loop()
-            last_log = loop.time()
-            with os.fdopen(fd, "wb") as f:
+            with open(path, "wb") as f:
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.get(url, headers=headers) as response:
                         response.raise_for_status()
@@ -253,17 +287,23 @@ class LocalAudioBackend(AudioBackend):
                         async for chunk in response.content.iter_chunked(65536):
                             await asyncio.to_thread(f.write, chunk)
                             total += len(chunk)
+                            if not header_ready.is_set():
+                                # Flush so get_file_info() can read the header
+                                await asyncio.to_thread(f.flush)
+                                header_ready.set()
                             now = loop.time()
                             if now - last_log >= 5.0:
                                 logger.debug(f"Downloaded {total // 1024}KB so far...")
                                 last_log = now
             logger.debug(f"Download complete: {total} bytes")
-            return path
-        except Exception:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+            self._download_complete = True
+        except asyncio.CancelledError:
+            logger.debug("Download cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"Download error: {e}")
+            header_ready.set()  # Unblock play() so it can surface the error
+            self._download_complete = True  # Unblock feeding loop
             raise
 
     async def _get_audio_info(self, path: str) -> tuple[int, int, int]:
@@ -326,7 +366,15 @@ class LocalAudioBackend(AudioBackend):
                         next, stream, None  # type: ignore[arg-type]
                     )
                     if chunk is None:
-                        break  # end of stream
+                        if not self._download_complete:
+                            # Decoder caught up with the download — wait and retry
+                            # from the current frame position (download is still writing)
+                            await asyncio.sleep(0.2)
+                            stream = await asyncio.to_thread(
+                                self._make_stream, self._frames_decoded
+                            )
+                            continue
+                        break  # download finished and decoder exhausted → done
                     pending_chunk = chunk
 
                 # ---- back-pressure: wait if ring buffer is nearly full ---
@@ -369,6 +417,16 @@ class LocalAudioBackend(AudioBackend):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    async def _cancel_download(self) -> None:
+        if self._download_task and not self._download_task.done():
+            self._download_task.cancel()
+            try:
+                await self._download_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._download_task = None
+        self._download_complete = False
 
     async def _cancel_feeding(self) -> None:
         if self._feeding_task and not self._feeding_task.done():

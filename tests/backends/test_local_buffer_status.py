@@ -187,7 +187,11 @@ class TestBufferStatusNotification:
                 yield audio[pos * 2 : end * 2]
                 pos = end
 
-        backend._download_to_tempfile = AsyncMock(return_value="/fake/track.flac")  # type: ignore[method-assign]
+        async def _fake_stream_download(url: str, path: str, header_ready: asyncio.Event) -> None:
+            header_ready.set()
+            backend._download_complete = True  # type: ignore[attr-defined]
+
+        backend._stream_download = _fake_stream_download  # type: ignore[method-assign]
         backend._get_audio_info = AsyncMock(return_value=(44100, 2, 1000))  # type: ignore[method-assign]
         backend._make_stream = _audio_gen  # type: ignore[method-assign]
         backend._stream.set_ring_buffer = MagicMock()
